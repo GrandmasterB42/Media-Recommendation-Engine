@@ -1,0 +1,1 @@
+The Styles and HTML are just patched together to work. I don't have experience and would much rather work on the backend. Any contributions to improve the styles, transitions and similar would be great. I really want to stick to plain HTML with htmx and css to not have extra build steps and to just keep it simple
