@@ -53,11 +53,11 @@ pub fn htmx() -> Router {
     Router::new()
         .route("/htmx", get(|| async { htmx }))
         .route(
-            "/redirect/:re",
+            "/redirect/*re",
             get(|Path(re): Path<String>| async move { HXRedirect(format!("/{re}")) }),
         )
         .route(
-            "/location/:loc",
+            "/location/*loc",
             get(|Path(loc): Path<String>| async move { HXLocation(format!("/{loc}")) }),
         )
 }

@@ -23,7 +23,7 @@ pub fn library() -> Router {
                 let mut html = String::new();
                 for (id, path) in files {
                     html.push_str(&format!(
-                        r#"<input type="button" hx-get="/video/{id}" hx-target=#content> {path} </div>"#,
+                        r#"<input type="button" hx-get="/location/video/{id}" hx-target=#content> {path} </div>"#,
                     ));
                 }
                 Ok(Html(format!("<div> {} </div>", html)))
