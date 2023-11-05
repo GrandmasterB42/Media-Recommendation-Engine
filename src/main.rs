@@ -1,11 +1,11 @@
-use std::fs::read_to_string;
+use std::time::Duration;
 
 use axum::{
-    extract::Path,
-    http::StatusCode,
+    extract::MatchedPath,
+    http::{Request, Response},
     response::{Html, Redirect},
     routing::get,
-    Extension, Router,
+    Router,
 };
 
 use tower_http::{
@@ -13,41 +13,33 @@ use tower_http::{
     trace::TraceLayer,
 };
 
-use tracing::info;
-use utils::{init_logging, HXRedirect};
+use tracing::{debug, debug_span, field, info, Span};
 
-use crate::{database::Database, utils::HXLocation};
+use crate::{
+    database::Database,
+    indexing::periodic_indexing,
+    utils::{htmx, init_tracing},
+};
 
 #[macro_use]
 mod utils;
 mod database;
-
-async fn db_test(Extension(database): Extension<Database>) -> Result<(), StatusCode> {
-    database
-        .connection()
-        .map_err(|_e| StatusCode::INTERNAL_SERVER_ERROR)?
-        .execute(
-            "CREATE TABLE test (id Integer PRIMARY KEY AUTOINCREMENT)",
-            (),
-        )
-        .map_err(|_e| StatusCode::IM_A_TEAPOT)?;
-    Ok(())
-}
+mod indexing;
+mod library;
 
 #[tokio::main]
 async fn main() {
-    init_logging();
+    init_tracing();
+
+    let db = Database::new().expect("failed to connect to database");
+
     let app = Router::new()
-        .route("/test", get(db_test))
         .route("/", get(|| async { Redirect::permanent("/browse") }))
         .route(
             "/explore",
             get(|| async { Html("<div> Nothing here yet, come back in some newer version</div>") }),
         )
-        .route(
-            "/library",
-            get(|| async { Html("<div> Working on this right now!</div>") }),
-        )
+        .merge(library::library())
         .nest_service("/styles", ServeDir::new("frontend/styles"))
         .nest_service("/browse", ServeFile::new("frontend/content/index.html"))
         .nest_service(
@@ -57,14 +49,38 @@ async fn main() {
         .merge(htmx())
         .fallback_service(ServeFile::new("frontend/content/err404.html"))
         // TODO: State instead of Extension?
-        .layer(Database::new().expect("failed to connect to database"))
-        .layer(TraceLayer::new_for_http());
+        .layer(db.clone())
+        // TODO: How do I move this out of here?
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(|_request: &Request<_>| {
+                    debug_span!("request", method = field::Empty, uri = field::Empty)
+                })
+                .on_request(|req: &Request<_>, span: &Span| {
+                    let method = req.method();
+                    let uri = req
+                        .extensions()
+                        .get::<MatchedPath>()
+                        .map(MatchedPath::as_str);
+                    span.record("method", method.to_string());
+                    span.record("uri", uri);
+                    debug!("Received Request");
+                })
+                .on_response(|res: &Response<_>, latency: Duration, _span: &Span| {
+                    let status = res.status();
+                    debug!("Took {latency:?} to respond with status '{status}'");
+                }),
+            // TODO: Add other meaningful options here once necessary
+        );
 
     let ip = "0.0.0.0:3000";
     info!("Starting server on {}", ip);
     let server = axum::Server::bind(&ip.parse().unwrap()).serve(app.into_make_service());
 
+    tokio::spawn(periodic_indexing(db.0));
+
     /*
+    TODO: shutting down
     wanted to use .with_graceful_shutdown(),
     but when using:
 
@@ -75,7 +91,7 @@ async fn main() {
     }
 
     inside, it doesn't shut down close to immediately,
-    but waits until all connections are closed ot something like that?
+    but waits until all connections are closed or something like that?
 
     This at least gets rid of the error message
     */
@@ -85,22 +101,4 @@ async fn main() {
         _ = tokio::signal::ctrl_c() => {},
     }
     info!("Suceessfully shut down");
-}
-
-fn htmx() -> Router {
-    // TODO: LICENSE for Htmx
-    // Doesn't need to be a ServeFile because it rarely changes
-    let htmx =
-        read_to_string(relative!("frontend/htmx.js")).expect("failed to read htmx into memory");
-
-    Router::new()
-        .route("/htmx", get(|| async { htmx }))
-        .route(
-            "/redirect/:re",
-            get(|Path(re): Path<String>| async move { HXRedirect(format!("/{re}")) }),
-        )
-        .route(
-            "/location/:loc",
-            get(|Path(loc): Path<String>| async move { HXLocation(format!("/{loc}")) }),
-        )
 }
