@@ -18,7 +18,7 @@ use tracing::{debug, debug_span, field, info, Span};
 use crate::{
     database::Database,
     indexing::periodic_indexing,
-    utils::{htmx, init_tracing},
+    utils::{htmx, init_tracing, HandleErr},
 };
 
 #[macro_use]
@@ -30,6 +30,12 @@ mod library;
 #[tokio::main]
 async fn main() {
     init_tracing();
+
+    let args = std::env::args().collect::<Vec<_>>();
+    if args.get(1).is_some_and(|a| a == "delete_db") {
+        std::fs::remove_file("database/database.sqlite").ignore();
+        std::fs::remove_file("database/database.sqlite-journal").ignore();
+    }
 
     let db = Database::new().expect("failed to connect to database");
 
