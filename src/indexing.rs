@@ -188,12 +188,12 @@ fn classify_new_file(path: &Path, id: u64, db: &Database) -> DatabaseResult<()> 
                         let mut series_id: Option<u64> = None;
                         if seriesids.len() > 1 {
                             // set series_id to the one with the most common characters
-                            let mut max_common = 0;
+                            let mut max_similarity = 0f32;
                             for (id, name) in &seriesids {
                                 if let Some(name) = name {
-                                    let common = common(name, &title).len();
-                                    if common > max_common {
-                                        max_common = common;
+                                    let similarity = similarity(name, &title);
+                                    if similarity > max_similarity {
+                                        max_similarity = similarity;
                                         series_id = Some(*id);
                                     }
                                 }
@@ -259,6 +259,8 @@ fn classify_new_file(path: &Path, id: u64, db: &Database) -> DatabaseResult<()> 
                                     "INSERT INTO episodes (seasonid, videoid, episode) VALUES (?1, ?2, ?3)",
                                     params![season_id, id, episode],
                                 )?;
+                            } else {
+                                create_completely_new_episode(db, id, episode, season, title)?;
                             }
                         }
                         (false, true) => {
