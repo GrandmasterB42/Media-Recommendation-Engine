@@ -42,6 +42,7 @@ impl Database {
     }
 
     // TODO: consider making this async because reasons, maybe not?
+    // -> Rethink the interface
     pub fn run<F, T>(&self, f: F) -> DatabaseResult<T>
     where
         F: FnOnce(Connection) -> rusqlite::Result<T> + Send + 'static,

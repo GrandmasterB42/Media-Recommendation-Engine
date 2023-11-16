@@ -47,6 +47,8 @@ async fn main() {
         )
         .merge(library::library())
         .nest_service("/styles", ServeDir::new("frontend/styles"))
+        // TODO: changing #content is not reflected in the url nor the history, this is bad
+        //       The Menu bar up top isn't great, settings and logout should probably be in a dropdown to the right and clicking on library again should bring yopu back to the start of the library
         .nest_service("/browse", ServeFile::new("frontend/content/index.html"))
         .nest_service(
             "/settings",
