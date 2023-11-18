@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use rusqlite::{params, types::Value, OptionalExtension};
+use rusqlite::{functions::FunctionFlags, params, types::Value, OptionalExtension};
 use tracing::{debug, warn};
 
 use crate::{
@@ -57,12 +57,11 @@ fn indexing(db: &Database) -> DatabaseResult<()> {
     // TODO: Also track changes and handle that
     let conn = db.get()?;
 
-    let mut insertion_stmt = conn.prepare("INSERT INTO data_files (path) VALUES (?1)")?;
-    let mut id_stmt = conn.prepare("SELECT last_insert_rowid()")?;
+    let mut insertion_stmt =
+        conn.prepare("INSERT INTO data_files (path) VALUES (?1) RETURNING id")?;
     for file in &filesystem {
         if !database_registered.contains(file) {
-            insertion_stmt.execute([path_to_db(file)])?;
-            let id = id_stmt.query_row([], |row| row.get(0))?;
+            let id = insertion_stmt.query_row([path_to_db(file)], |row| row.get(0))?;
             classify_new_file(file, id, db)?;
         }
     }
@@ -111,19 +110,6 @@ fn classify_new_file(path: &Path, id: u64, db: &Database) -> DatabaseResult<()> 
     }
 
     let conn = db.get()?;
-    let mut similar_datafiles_stmt =
-        conn.prepare("SELECT id FROM data_files WHERE path LIKE ?1")?;
-
-    let mut all_similar = Vec::new();
-    for parent in path.ancestors().skip(1) {
-        let rows = similar_datafiles_stmt.query([format!("{}%", path_to_db(parent))])?;
-        let similar_ids = rows.mapped(|r| r.get(0)).collect::<Result<Vec<u64>, _>>()?;
-        if similar_ids.len() > 1 {
-            all_similar.extend(similar_ids);
-            break;
-        }
-    }
-    all_similar.retain(|x| *x != id);
 
     // TODO: Try to infer stuff from further down the path
     match infer_from_filename(path) {
@@ -148,6 +134,22 @@ fn classify_new_file(path: &Path, id: u64, db: &Database) -> DatabaseResult<()> 
                     1
                 });
 
+            let mut similar_datafiles_stmt =
+                conn.prepare("SELECT id FROM data_files WHERE path LIKE (?1 || '%') AND id != ?2")?;
+
+            let mut all_similar = Vec::new();
+            for parent in path.ancestors().skip(1) {
+                let similar_ids = similar_datafiles_stmt
+                    .query_map(params![path_to_db(parent), id], |r| r.get(0))?
+                    .collect::<Result<Vec<u64>, _>>()?;
+                if !similar_ids.is_empty() {
+                    all_similar.extend(similar_ids);
+                    break;
+                }
+            }
+
+            rusqlite::vtab::array::load_module(&conn)?;
+
             let values: Rc<Vec<Value>> = Rc::new(
                 all_similar
                     .iter()
@@ -155,12 +157,11 @@ fn classify_new_file(path: &Path, id: u64, db: &Database) -> DatabaseResult<()> 
                     .collect(),
             );
 
-            rusqlite::vtab::array::load_module(&conn)?;
             let mut seasons_stmt =
                 conn.prepare("SELECT DISTINCT seasonid FROM episodes WHERE videoid IN rarray(?1)")?;
+
             let seasonids = seasons_stmt
-                .query([values])?
-                .mapped(|r| r.get(0))
+                .query_map([&values], |r| r.get(0))?
                 .collect::<Result<Vec<u64>, _>>()?;
 
             match seasonids.len() {
@@ -171,47 +172,44 @@ fn classify_new_file(path: &Path, id: u64, db: &Database) -> DatabaseResult<()> 
                 1.. => {
                     let mut season_id = None;
                     if seasonids.len() > 1 {
-                        let values: Rc<Vec<Value>> = Rc::new(
-                            seasonids
-                                .iter()
-                                .map(|x| Value::Integer(*x as i64))
-                                .collect(),
-                        );
-                        let mut series_stmt = conn.prepare(
-                            "SELECT DISTINCT seriesid, name FROM seasons WHERE id IN rarray(?1)",
+                        conn.create_scalar_function(
+                            "common",
+                            2,
+                            FunctionFlags::SQLITE_DETERMINISTIC | FunctionFlags::SQLITE_UTF8,
+                            |ctx| {
+                                assert_eq!(
+                                    ctx.len(),
+                                    2,
+                                    "called with unexpected number of arguments"
+                                );
+                                let s1: Option<String> = ctx.get(0)?;
+                                let s2: Option<String> = ctx.get(1)?;
+                                let common =
+                                    common(&s1.unwrap_or_default(), &s2.unwrap_or_default());
+                                Ok(common)
+                            },
                         )?;
-                        let seriesids = series_stmt
-                            .query([values])?
-                            .mapped(|r| Ok((r.get(0)?, r.get(1)?)))
-                            .collect::<Result<Vec<(u64, Option<String>)>, _>>()?;
 
-                        let mut series_id: Option<u64> = None;
-                        if seriesids.len() > 1 {
-                            // set series_id to the one with the most common characters
-                            let mut max_similarity = 0f32;
-                            for (id, name) in &seriesids {
-                                if let Some(name) = name {
-                                    let similarity = similarity(name, &title);
-                                    if similarity > max_similarity {
-                                        max_similarity = similarity;
-                                        series_id = Some(*id);
-                                    }
-                                }
+                        let series_id: Option<u64> = conn.query_row(
+                            "SELECT DISTINCT seriesid, MAX(common(name, ?1)) as similarity FROM seasons WHERE id IN (
+                            SELECT DISTINCT seasonid FROM episodes WHERE videoid IN rarray(?2)
+                        ) ORDER BY similarity DESC LIMIT 1",
+                            params![title, values],
+                            |r| r.get(0),
+                        )?;
+
+                        if let Some(series_id) = series_id {
+                            let matching_season: Option<u64> = conn
+                                .query_row(
+                                    "SELECT id FROM seasons WHERE seriesid=?1 AND season=?2",
+                                    [series_id, season],
+                                    |r| r.get(0),
+                                )
+                                .optional()?;
+
+                            if let Some(matching) = matching_season {
+                                season_id = Some(matching);
                             }
-                        }
-
-                        let series_id = series_id.unwrap_or(seriesids[0].0);
-
-                        let matching_season: Option<u64> = conn
-                            .query_row(
-                                "SELECT id FROM seasons WHERE seriesid=?1 AND season=?2",
-                                [series_id, season],
-                                |r| r.get(0),
-                            )
-                            .optional()?;
-
-                        if let Some(matching) = matching_season {
-                            season_id = Some(matching);
                         }
                     };
 
@@ -272,13 +270,9 @@ fn classify_new_file(path: &Path, id: u64, db: &Database) -> DatabaseResult<()> 
                                 "INSERT INTO seasons (seriesid, season) VALUES (?1, ?2)",
                                 params![series_id, season],
                             )?;
-                            let season_id =
-                                conn.query_row("SELECT last_insert_rowid()", [], |row| {
-                                    row.get::<usize, u64>(0)
-                                })?;
                             conn.execute(
-                                "INSERT INTO episodes (seasonid, videoid, episode) VALUES (?1, ?2, ?3)",
-                                params![season_id, id, episode],
+                                "INSERT INTO episodes (seasonid, videoid, episode) VALUES (last_insert_rowid(), ?1, ?2)",
+                                params![id, episode],
                             )?;
                         }
                         (false, false) => {
@@ -292,13 +286,9 @@ fn classify_new_file(path: &Path, id: u64, db: &Database) -> DatabaseResult<()> 
                                     "INSERT INTO seasons (seriesid, season, name) VALUES (?1, ?2, ?3)",
                                     params![series_id, season, title],
                                 )?;
-                                let season_id =
-                                    conn.query_row("SELECT last_insert_rowid()", [], |row| {
-                                        row.get::<usize, u64>(0)
-                                    })?;
                                 conn.execute(
-                                    "INSERT INTO episodes (seasonid, videoid, episode) VALUES (?1, ?2, ?3)",
-                                    params![season_id, id, episode],
+                                    "INSERT INTO episodes (seasonid, videoid, episode) VALUES (last_insert_rowid(), ?1, ?2)",
+                                    params![id, episode],
                                 )?;
                             } else {
                                 create_completely_new_episode(db, id, episode, season, title)?
@@ -322,23 +312,17 @@ fn create_completely_new_episode(
     title: String,
 ) -> DatabaseResult<()> {
     let conn = db.get()?;
+
     conn.execute("INSERT INTO series (title) VALUES (?1)", params![title])?;
-    let seriesid = conn.query_row("SELECT last_insert_rowid()", [], |row| {
-        row.get::<usize, u64>(0)
-    })?;
-
     conn.execute(
-        "INSERT INTO seasons (seriesid, season, name) VALUES (?1, ?2, ?3)",
-        params![seriesid, season, title],
+        "INSERT INTO seasons (seriesid, season, name) VALUES (last_insert_rowid(), ?1, ?2)",
+        params![season, title],
     )?;
-    let seasonid = conn.query_row("SELECT last_insert_rowid()", [], |row| {
-        row.get::<usize, u64>(0)
-    })?;
-
     conn.execute(
-        "INSERT INTO episodes (seasonid, videoid, episode, name) VALUES (?1, ?2, ?3, ?4)",
-        params![seasonid, videoid, episode, title],
+        "INSERT INTO episodes (seasonid, videoid, episode, name) VALUES (last_insert_rowid(), ?1, ?2, ?3)",
+        params![videoid, episode, title],
     )?;
+
     Ok(())
 }
 
