@@ -6,7 +6,7 @@ use std::{
 };
 
 use rusqlite::{functions::FunctionFlags, params, types::Value, OptionalExtension};
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::{
     database::{Database, DatabaseResult},
@@ -31,26 +31,16 @@ fn indexing(db: &Database) -> DatabaseResult<()> {
         Ok(paths)
     })?;
 
-    let (directories, files): (Vec<_>, Vec<_>) = locations
+    let filesystem = locations
         .into_iter()
         .map(PathBuf::from)
-        .partition(|path| path.is_dir());
-
-    let filesystem = files
-        .into_iter()
-        .chain(directories.into_iter().flat_map(scan_dir))
+        .flat_map(scan_dir)
         .collect::<Vec<_>>();
 
-    let database_registered = db.run(|conn| {
-        let mut stmt = conn.prepare("SELECT path from data_files")?;
-
-        let mut out: Vec<PathBuf> = Vec::new();
-        if let Ok(mut rows) = stmt.query([]) {
-            while let Some(row) = rows.next()? {
-                out.push(row.get::<usize, String>(0)?.into());
-            }
-        }
-        Ok(out)
+    let database_registered: Vec<PathBuf> = db.run(|conn| {
+        conn.prepare("SELECT path from data_files")?
+            .query_map([], |row| Ok(PathBuf::from(row.get::<usize, String>(0)?)))?
+            .collect()
     })?;
 
     // Note: There is probably a faster? way to do these two loops, but this is good enough for now
@@ -74,7 +64,7 @@ fn indexing(db: &Database) -> DatabaseResult<()> {
         }
     }
 
-    debug!("Finished indexing once");
+    info!("Finished indexing once");
     Ok(())
 }
 
@@ -412,27 +402,24 @@ enum Classification {
 }
 
 // TODO: Make recursive a setting maybe?
-/// Requires that the given PathBuf points to a directory
 fn scan_dir(path: PathBuf) -> Vec<PathBuf> {
-    path.read_dir()
-        .log_err_with_msg("Failed to read directory")
-        .map_or(Vec::new(), |read_dir| {
-            let mut out = Vec::new();
+    path.read_dir().map_or(Vec::new(), |read_dir| {
+        let mut out = Vec::new();
 
-            for entry in read_dir {
-                if let Some(entry) =
-                    entry.log_err_with_msg("Encountered IO Error while scanning directory")
-                {
-                    let path = entry.path();
-                    if path.is_dir() {
-                        out.extend(scan_dir(path));
-                    } else {
-                        out.push(path);
-                    }
+        for entry in read_dir {
+            if let Some(entry) =
+                entry.log_err_with_msg("Encountered IO Error while scanning directory")
+            {
+                let path = entry.path();
+                if path.is_dir() {
+                    out.extend(scan_dir(path));
+                } else {
+                    out.push(path);
                 }
             }
-            out
-        })
+        }
+        out
+    })
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -455,6 +442,7 @@ fn file_type(path: &Path) -> Option<FileType> {
     }
 }
 
+// TODO: Switch to a more sophisticated algorithm
 fn similarity(s1: &str, s2: &str) -> f32 {
     common(s1, s2).len() as f32 / s1.len().max(s2.len()) as f32
 }
