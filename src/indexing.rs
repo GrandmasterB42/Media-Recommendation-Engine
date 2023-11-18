@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use rusqlite::{functions::FunctionFlags, params, types::Value, OptionalExtension};
+use rusqlite::{functions::FunctionFlags, params, types::Value, Connection, OptionalExtension};
 use tracing::{debug, info, warn};
 
 use crate::{
@@ -156,7 +156,7 @@ fn classify_new_file(path: &Path, id: u64, db: &Database) -> DatabaseResult<()> 
 
             match seasonids.len() {
                 0 => {
-                    create_completely_new_episode(db, id, episode, season, title)?;
+                    create_completely_new_episode(&conn, id, episode, season, title)?;
                     return Ok(());
                 }
                 1.. => {
@@ -248,7 +248,7 @@ fn classify_new_file(path: &Path, id: u64, db: &Database) -> DatabaseResult<()> 
                                     params![season_id, id, episode],
                                 )?;
                             } else {
-                                create_completely_new_episode(db, id, episode, season, title)?;
+                                create_completely_new_episode(&conn, id, episode, season, title)?;
                             }
                         }
                         (false, true) => {
@@ -281,7 +281,7 @@ fn classify_new_file(path: &Path, id: u64, db: &Database) -> DatabaseResult<()> 
                                     params![id, episode],
                                 )?;
                             } else {
-                                create_completely_new_episode(db, id, episode, season, title)?
+                                create_completely_new_episode(&conn, id, episode, season, title)?
                             }
                         }
                     }
@@ -295,20 +295,18 @@ fn classify_new_file(path: &Path, id: u64, db: &Database) -> DatabaseResult<()> 
 }
 
 fn create_completely_new_episode(
-    db: &Database,
+    db: &Connection,
     videoid: u64,
     episode: u64,
     season: u64,
     title: String,
 ) -> DatabaseResult<()> {
-    let conn = db.get()?;
-
-    conn.execute("INSERT INTO series (title) VALUES (?1)", params![title])?;
-    conn.execute(
+    db.execute("INSERT INTO series (title) VALUES (?1)", params![title])?;
+    db.execute(
         "INSERT INTO seasons (seriesid, season, name) VALUES (last_insert_rowid(), ?1, ?2)",
         params![season, title],
     )?;
-    conn.execute(
+    db.execute(
         "INSERT INTO episodes (seasonid, videoid, episode, name) VALUES (last_insert_rowid(), ?1, ?2, ?3)",
         params![videoid, episode, title],
     )?;
