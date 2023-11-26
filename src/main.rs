@@ -1,3 +1,4 @@
+#![feature(pattern)]
 use std::time::Duration;
 
 use axum::{

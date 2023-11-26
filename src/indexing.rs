@@ -10,7 +10,7 @@ use tracing::{debug, info, warn};
 
 use crate::{
     database::{Database, DatabaseResult},
-    utils::HandleErr,
+    utils::{HandleErr, ParseBetween, ParseUntil},
 };
 
 pub async fn periodic_indexing(db: Database) -> ! {
@@ -302,7 +302,7 @@ fn infer_from_video_path(path: &Path) -> PathClassification {
         // TODO: Seperate the parsing of the format parsed in this function
         let classification = infer_from_video_filename(Path::new(file_name));
         names.push(match classification {
-            Classification::Movie { title, .. } => title,
+            Classification::Movie { title, .. } => title.to_string(),
             Classification::Episode {
                 title,
                 episode,
@@ -311,7 +311,7 @@ fn infer_from_video_path(path: &Path) -> PathClassification {
             } => {
                 intermediate.episode = episode;
                 intermediate.season = season;
-                title
+                title.to_string()
             }
         })
     }
@@ -399,89 +399,48 @@ enum PathClassification {
 }
 
 // TODO: There need to be tests for this
-// TODO: See if itertools can make this function better
 fn infer_from_video_filename(path: &Path) -> Classification {
     let file_stem = os_str_conversion(path.file_stem().unwrap());
-    let mut split = file_stem.split('-');
-    let metadata = split.next_back().unwrap();
+    let (begin, metadata) = file_stem.rsplit_once('-').unwrap_or((file_stem, ""));
 
     let (mut season, mut episode, mut part) = (None, None, None);
 
     [('s', &mut season), ('e', &mut episode), ('p', &mut part)].map(|(delim, var)| {
-        if let Ok(x) = metadata
-            .chars()
-            .skip_while(|&c| c != delim)
-            .skip(1)
-            .take_while(char::is_ascii_digit)
-            .collect::<String>()
-            .parse::<u64>()
-        {
-            *var = Some(x);
-        }
+        metadata
+            .parse_between(delim, |c: char| !c.is_ascii_digit())
+            .map(|num| *var = Some(num))
+            .ignore()
     });
 
     let is_movie = season.is_none() && episode.is_none();
+    let rest = if is_movie { file_stem } else { begin }.trim_end();
 
-    let mut rest = String::new();
-
-    for part in split {
-        rest.push_str(part);
-        rest.push('-');
-    }
-
-    if is_movie {
-        rest.push_str(metadata);
-    } else {
-        rest.pop();
-    }
-
-    let rest = rest.trim_end_matches(char::is_whitespace);
-    let mut whitespace_seperated = rest.split_whitespace();
-    let mut name = String::new();
-    let last = whitespace_seperated.next_back();
-    if last.is_none() {
-        panic!("infering stuff didn't work on {file_stem}, rest: {rest}")
-    }
-    let last = last.unwrap();
-
-    if let Ok(year) = last
-        .chars()
-        .skip(1)
-        .take_while(char::is_ascii_digit)
-        .collect::<String>()
-        .parse::<u16>()
-    {
-        let _ = year; // TODO: use year at some point
-
-        for part in whitespace_seperated {
-            name.push_str(part);
-            name.push(' ');
-        }
-        name.pop();
-    } else {
-        name = rest.to_string();
-    }
+    let (begin, last) = rest.rsplit_once(char::is_whitespace).unwrap_or((rest, ""));
+    // TODO: use year at some point
+    // 1 is skipped because the year is expected to be in brackets
+    let (name, _year): (_, Option<u16>) = (&last[1..])
+        .parse_until(|c: char| !c.is_ascii_digit())
+        .map_or_else(|_e| (rest, None), |year| (begin, Some(year)));
 
     if is_movie {
-        Classification::Movie { title: name, part }
-    } else {
-        Classification::Episode {
-            title: name,
-            season,
-            episode,
-            part,
-        }
+        return Classification::Movie { title: name, part };
+    }
+    Classification::Episode {
+        title: name,
+        season,
+        episode,
+        part,
     }
 }
 
 #[derive(Debug)]
-enum Classification {
+enum Classification<'a> {
     Movie {
-        title: String,
+        title: &'a str,
         part: Option<u64>,
     },
     Episode {
-        title: String,
+        title: &'a str,
         season: Option<u64>,
         episode: Option<u64>,
         part: Option<u64>,
