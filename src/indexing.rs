@@ -140,21 +140,11 @@ fn classify_video(
                     series_title,
                 } = path_classification
                 {
-                    if classification.episode_title.is_none() {
-                        classification.episode_title = episode_title;
-                    }
-                    if classification.episode.is_none() {
-                        classification.episode = episode;
-                    }
-                    if classification.season_title.is_none() {
-                        classification.season_title = season_title;
-                    }
-                    if classification.season.is_none() {
-                        classification.season = season;
-                    }
-                    if classification.series_title.is_none() {
-                        classification.series_title = series_title;
-                    }
+                    classification.episode_title = classification.episode_title.or(episode_title);
+                    classification.episode = classification.episode.or(episode);
+                    classification.season_title = classification.season_title.or(season_title);
+                    classification.season = classification.season.or(season);
+                    classification.series_title = classification.series_title.or(series_title);
                 }
 
                 // Find series or insert new
