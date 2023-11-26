@@ -10,7 +10,7 @@ use tracing::{debug, info, warn};
 
 use crate::{
     database::{Database, DatabaseResult},
-    utils::{HandleErr, ParseBetween, ParseUntil},
+    utils::{HandleErr, Ignore, ParseBetween, ParseUntil},
 };
 
 pub async fn periodic_indexing(db: Database) -> ! {
@@ -90,7 +90,7 @@ fn classify_new_files(db: &Connection, data_files: Vec<(PathBuf, u64)>) -> Datab
         })
         .group_by(|(file_type, _, _)| file_type.clone());
 
-    let _ = groups
+    groups
         .into_iter()
         .map(|(file_type, group)| match file_type {
             FileType::Video => classify_video(db, group),
@@ -238,12 +238,12 @@ fn classify_video(
     Ok(())
 }
 
-struct EpisodeClassification {
-    episode_title: Option<String>,
+struct EpisodeClassification<'a> {
+    episode_title: Option<&'a str>,
     episode: Option<u64>,
-    season_title: Option<String>,
+    season_title: Option<&'a str>,
     season: Option<u64>,
-    series_title: Option<String>,
+    series_title: Option<&'a str>,
     part: Option<u64>,
 }
 
@@ -280,38 +280,22 @@ fn infer_from_video_path(path: &Path) -> PathClassification {
         .take_while(|comp| matches!(comp, Component::Normal(_)))
         .map(|comp| os_str_conversion(comp.as_os_str()));
 
-    struct IntermediateClassification {
-        episode_title: Option<String>,
-        episode: Option<u64>,
-        season_title: Option<String>,
-        season: Option<u64>,
-        series_title: Option<String>,
-    }
-
-    let mut intermediate = IntermediateClassification {
-        episode_title: None,
-        episode: None,
-        season_title: None,
-        season: None,
-        series_title: None,
-    };
-
-    let mut names: Vec<String> = Vec::new();
+    let (mut episode_title, mut episode, mut season_title, mut season, mut series_title) =
+        (None, None, None, None, None);
+    let mut names: Vec<&str> = Vec::new();
 
     if let Some(file_name) = components.next() {
         // TODO: Seperate the parsing of the format parsed in this function
-        let classification = infer_from_video_filename(Path::new(file_name));
-        names.push(match classification {
-            Classification::Movie { title, .. } => title.to_string(),
+        names.push(match infer_from_video_filename(Path::new(file_name)) {
+            Classification::Movie { title, .. } => title,
             Classification::Episode {
                 title,
-                episode,
-                season,
+                episode: e,
+                season: s,
                 ..
             } => {
-                intermediate.episode = episode;
-                intermediate.season = season;
-                title.to_string()
+                (season, episode) = (s, e);
+                title
             }
         })
     }
@@ -321,80 +305,68 @@ fn infer_from_video_path(path: &Path) -> PathClassification {
     // take episode_title and maybe the season and episode
     while i < 4 {
         if let Some(dir_name) = components.next() {
-            let lower_dir_name = dir_name.to_ascii_lowercase();
+            let lower_dir_name: &str = &dir_name.to_ascii_lowercase();
             if lower_dir_name.starts_with("episode") && i < 2 {
-                if let Ok(episode) = lower_dir_name
-                    .trim_start_matches("episode")
-                    .trim_start()
-                    .chars()
-                    .take_while(char::is_ascii_digit)
-                    .collect::<String>()
-                    .parse::<u64>()
-                {
-                    intermediate.episode = Some(episode);
-                    i = 1;
-                }
+                lower_dir_name
+                    .parse_between("episode ", |c: char| !c.is_ascii_digit())
+                    .map(|e| {
+                        episode = Some(e);
+                        i = 1;
+                    })
+                    .ignore();
             } else if lower_dir_name.starts_with("season") && i < 4 {
-                if let Ok(season) = lower_dir_name
-                    .trim_start_matches("season")
-                    .trim_start()
-                    .chars()
-                    .take_while(char::is_ascii_digit)
-                    .collect::<String>()
-                    .parse::<u64>()
-                {
-                    intermediate.season = Some(season);
-                    i = 3;
-                }
+                lower_dir_name
+                    .parse_between("season ", |c: char| !c.is_ascii_digit())
+                    .map(|s| {
+                        season = Some(s);
+                        i = 3;
+                    })
+                    .ignore();
             } else {
-                names.push(dir_name.to_owned())
+                names.push(dir_name)
             }
         }
-
         i += 1;
     }
 
     // Take potential series name
-    if let Some(dir_name) = components.next() {
-        names.push(dir_name.to_owned())
-    }
+    components
+        .next()
+        .map(|dir_name| names.push(dir_name))
+        .ignore();
 
-    if intermediate.season.is_some() || intermediate.episode.is_some() {
+    if season.is_some() || episode.is_some() {
         names.dedup();
 
         names
             .into_iter()
             .rev()
-            .zip(&mut [
-                &mut intermediate.series_title,
-                &mut intermediate.season_title,
-                &mut intermediate.episode_title,
-            ])
+            .zip(&mut [&mut series_title, &mut season_title, &mut episode_title])
             .map(|(name, var)| {
                 **var = Some(name);
             })
             .for_each(drop);
-        PathClassification::Episode {
-            episode_title: intermediate.episode_title,
-            episode: intermediate.episode,
-            season_title: intermediate.season_title,
-            season: intermediate.season,
-            series_title: intermediate.series_title,
-        }
-    } else {
-        PathClassification::Movie {}
+
+        return PathClassification::Episode {
+            episode_title,
+            episode,
+            season_title,
+            season,
+            series_title,
+        };
     }
+    PathClassification::Movie {}
 }
 
 #[derive(Debug)]
-enum PathClassification {
+enum PathClassification<'a> {
     Movie {},
     Episode {
-        episode_title: Option<String>,
+        episode_title: Option<&'a str>,
         episode: Option<u64>,
-        season_title: Option<String>,
+        season_title: Option<&'a str>,
         season: Option<u64>,
-        series_title: Option<String>,
+        series_title: Option<&'a str>,
     },
 }
 
@@ -488,13 +460,6 @@ fn resolve_part(db: &Connection, part: Option<u64>, data_id: u64) -> DatabaseRes
     })
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FileType {
-    Video,
-    Audio,
-    Unknown,
-}
-
 /// Returns the filetype classified into what is known by the system
 /// Returns None if the path has no file extension or if it isn't valid utf-8
 fn file_type(path: &Path) -> Option<FileType> {
@@ -506,6 +471,13 @@ fn file_type(path: &Path) -> Option<FileType> {
         },
         None => None,
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FileType {
+    Video,
+    Audio,
+    Unknown,
 }
 
 // TODO: These conversions are implemented here so i stay consistent with what i use -> find a better approach

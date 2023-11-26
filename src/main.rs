@@ -19,7 +19,7 @@ use tracing::{debug, debug_span, field, info, Span};
 use crate::{
     database::Database,
     indexing::periodic_indexing,
-    utils::{htmx, init_tracing, HandleErr},
+    utils::{htmx, init_tracing, Ignore},
 };
 
 #[macro_use]

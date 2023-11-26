@@ -124,8 +124,6 @@ where
 {
     type OkValue;
 
-    fn ignore(self) {}
-
     fn log_err(self) -> Option<Self::OkValue>;
 
     fn log_err_with_msg(self, msg: &str) -> Option<Self::OkValue>;
@@ -180,6 +178,14 @@ where
             }
         }
     }
+}
+
+pub trait Ignore {
+    fn ignore(self);
+}
+
+impl<T: Sized> Ignore for T {
+    fn ignore(self) {}
 }
 
 pub trait ParseUntil<D, O, E> {
