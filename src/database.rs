@@ -15,7 +15,12 @@ impl ManageConnection for ConnectionManager {
     type Error = rusqlite::Error;
 
     fn connect(&self) -> Result<Self::Connection, Self::Error> {
-        rusqlite::Connection::open("database/database.sqlite")
+        let conn = rusqlite::Connection::open("database/database.sqlite")?;
+        // NOTE: Read the Docs before changing something about these pragmas
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
+        conn.pragma_update(None, "foreign_keys", "ON")?;
+        Ok(conn)
     }
 
     fn is_valid(&self, _conn: &mut Self::Connection) -> Result<(), Self::Error> {
@@ -84,33 +89,41 @@ fn db_init(conn: Connection) -> rusqlite::Result<()> {
     // NOTE: I know this isn't the best way to do this, but I'm lazy and it's easy to extend right now
     // TODO: Make name/title consistent
     const INIT_REQUESTS: &[&str] = &[
+        // TODO: Switch to using rowid indstead of id INTEGER PRIMARY KEY
         "CREATE TABLE storage_locations (path)",
         "INSERT INTO storage_locations VALUES ('Y:')",
         "CREATE TABLE data_files (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id INTEGER PRIMARY KEY,
             path TEXT NOT NULL
         )",
-        "CREATE TABLE movies (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+        "CREATE TABLE multipart (
+            id INTEGER NOT NULL,
             videoid INTEGER REFERENCES data_files (id),
+            part INTEGER NOT NULL
+        )",
+        "CREATE TABLE movies (
+            id INTEGER PRIMARY KEY,
+            videoid INTEGER,
+            referenceflag INTEGER NOT NULL,
             title TEXT NOT NULL
         )",
         "CREATE TABLE series (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL
+            id INTEGER PRIMARY KEY,
+            title TEXT NULL
         )",
         "CREATE TABLE seasons (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id INTEGER PRIMARY KEY,
             seriesid INTEGER REFERENCES series (id),
             season INTEGER NULL,
-            name TEXT NULL
+            title TEXT NULL
         )",
         "CREATE TABLE episodes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id INTEGER PRIMARY KEY,
             seasonid INTEGER REFERENCES seasons (id),
-            videoid INTEGER REFERENCES data_files (id),
+            videoid INTEGER,
+            referenceflag INTEGER NOT NULL,
             episode INTEGER NOT NULL,
-            name TEXT NULL
+            title TEXT NULL
         )",
     ];
 

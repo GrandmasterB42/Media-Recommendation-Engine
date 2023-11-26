@@ -14,10 +14,10 @@ pub fn library() -> Router {
             "/library",
             get(|db: Extension<Database>| async move {
                 db.run(|conn: Connection| {
-                    let mut stmt = conn.prepare("SELECT videoid, title FROM movies")?;
+                    let mut stmt = conn.prepare("SELECT videoid, referenceflag, title FROM movies")?;
                     let movies = stmt
                         .query_map([], |row| {
-                            let x: (u32, String) = (row.get(0)?, row.get(1)?);
+                            let x: (u64, u64, String) = (row.get(0)?, row.get(1)?, row.get(2)?);
                             Ok(x)
                         })?
                         .collect::<Result<Vec<_>, _>>()?;
@@ -32,7 +32,10 @@ pub fn library() -> Router {
 
                     html.push_str("<h1> Movies </h1>");
                     html.push_str(r#"<div class="gridcontainer">"#);
-                    for (id, name) in movies {
+                    for (mut id, reference_flag,  name) in movies {
+                        if reference_flag == 1 {
+                            id = conn.query_row("SELECT videoid FROM multipart WHERE id = ?1 AND part = 1", [id], |row| row.get(0))?;
+                        }
                         html.push_str(&format!(
                         r#"<div hx-get="/redirect/video/{id}" hx-target=#content class="gridcell">
                         <img width="200" height="300">
@@ -89,7 +92,7 @@ pub fn library() -> Router {
                             html.push_str("<h2> Episodes </h2>");
                             let season_id: u64 = conn.query_row("SELECT id FROM seasons WHERE seriesid=?1", [id], |r| r.get(0))?;
 
-                            let mut stmt = conn.prepare("SELECT videoid, name, episode FROM episodes WHERE seasonid=?1 ORDER BY episode ASC")?;
+                            let mut stmt = conn.prepare("SELECT videoid, title, episode FROM episodes WHERE seasonid=?1 ORDER BY episode ASC")?;
                             let episodes = stmt
                                 .query_map([season_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
                                 .collect::<Result<Vec<(u64, Option<String>, u64)>, _>>()
@@ -110,7 +113,7 @@ pub fn library() -> Router {
                         },
                         2.. => {
                             html.push_str("<h2> Seasons </h2>");
-                            let mut stmt = conn.prepare("SELECT id, name, season FROM seasons WHERE seriesid=?1 ORDER BY season ASC")?;
+                            let mut stmt = conn.prepare("SELECT id, title, season FROM seasons WHERE seriesid=?1 ORDER BY season ASC")?;
                             let seasons = stmt
                                 .query_map([id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
                                 .collect::<Result<Vec<(u64, Option<String>, u64)>, _>>()
@@ -141,26 +144,26 @@ pub fn library() -> Router {
             db.run(move |conn| {
                 let mut html = String::new();
 
-                let (mut season_name, season): (Option<String>, u64) = conn.query_row("SELECT name, season FROM seasons WHERE id=?1", [id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+                let (mut season_title, season): (Option<String>, u64) = conn.query_row("SELECT title, season FROM seasons WHERE id=?1", [id], |row| Ok((row.get(0)?, row.get(1)?)))?;
 
-                if season_name.is_none() {
+                if season_title.is_none() {
                     let series_id: u64 = conn.query_row("SELECT seriesid FROM seasons WHERE id=?1", [id], |row| row.get(0))?;
-                    let series_name: String = conn.query_row("SELECT title FROM series WHERE id=?1", [series_id], |row| row.get(0))?;
-                    season_name = Some(format!("{series_name} Season {season}")); 
+                    let series_title: String = conn.query_row("SELECT title FROM series WHERE id=?1", [series_id], |row| row.get(0))?;
+                    season_title = Some(format!("{series_title} Season {season}")); 
                 }
-                let season_name = season_name.unwrap();
+                let season_title = season_title.unwrap();
 
                 html.push_str(&format!(
                     r#"
                     <div style="padding: 15px; display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: flex-start;">
                         <img width="250" height="375">
-                        <h1 style="position:relative; left: 30px; text-align: left; flex: 1;"> {season_name} </h1>
+                        <h1 style="position:relative; left: 30px; text-align: left; flex: 1;"> {season_title} </h1>
                     </div>
                     "#,
                 ));
 
                 html.push_str("<h2> Episodes </h2>");
-                let mut stmt = conn.prepare("SELECT videoid, name, episode FROM episodes WHERE seasonid=?1 ORDER BY episode ASC")?;
+                let mut stmt = conn.prepare("SELECT videoid, title, episode FROM episodes WHERE seasonid=?1 ORDER BY episode ASC")?;
                 let episodes = stmt
                     .query_map([id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
                     .collect::<Result<Vec<(u64, Option<String>, u64)>, _>>()?;
