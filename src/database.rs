@@ -21,9 +21,8 @@ impl ManageConnection for ConnectionManager {
         Ok(conn)
     }
 
-    fn is_valid(&self, _conn: &mut Self::Connection) -> Result<(), Self::Error> {
-        //conn.execute("SELECT 1", ())?; TODO: Make this do something
-        Ok(())
+    fn is_valid(&self, conn: &mut Self::Connection) -> Result<(), Self::Error> {
+        conn.query_row("SELECT 1", [], |_r| Ok(()))
     }
 
     fn has_broken(&self, _conn: &mut Self::Connection) -> bool {
