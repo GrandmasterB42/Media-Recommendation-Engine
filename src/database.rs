@@ -6,8 +6,6 @@ use tracing::info;
 
 use crate::utils::HandleErr;
 
-// TODO: Consider moving this into a submodule
-
 pub struct ConnectionManager;
 
 impl ManageConnection for ConnectionManager {
@@ -87,9 +85,7 @@ fn db_init(conn: Connection) -> rusqlite::Result<()> {
         -> last modified changed -> could be the trigger for recomputing the hash depending on how expensive that is, does this have any other meaning?
     */
     // NOTE: I know this isn't the best way to do this, but I'm lazy and it's easy to extend right now
-    // TODO: Make name/title consistent
     const INIT_REQUESTS: &[&str] = &[
-        // TODO: Switch to using rowid indstead of id INTEGER PRIMARY KEY
         "CREATE TABLE storage_locations (path)",
         "INSERT INTO storage_locations VALUES ('Y:')",
         "CREATE TABLE data_files (
