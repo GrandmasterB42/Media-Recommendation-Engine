@@ -163,7 +163,7 @@ pub fn library() -> Router {
                 ));
 
                 html.push_str("<h2> Episodes </h2>");
-                let mut stmt = conn.prepare("SELECT videoid, title, episode FROM episodes WHERE seasonid=?1 ORDER BY episode ASC")?;
+                let mut stmt = conn.prepare("SELECT videoid, title, episode FROM episodes WHERE seasonid=?1 AND referenceflag = 0 ORDER BY episode ASC")?;
                 let episodes = stmt
                     .query_map([id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
                     .collect::<Result<Vec<(u64, Option<String>, u64)>, _>>()?;
@@ -212,3 +212,13 @@ pub fn library() -> Router {
             ),
         )
 }
+
+/*
+<dialog open="" style="
+    background-color: transparent;
+    border-color: transparent;
+    right: 0px;
+    margin-right: 0;
+    position: fixed;
+"> <audio src="/content/13" autoplay="" controls="" loop=""> </audio></dialog>
+*/

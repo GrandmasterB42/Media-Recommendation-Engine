@@ -74,7 +74,6 @@ fn indexing(db: &Database) -> DatabaseResult<()> {
     Ok(())
 }
 
-// TODO: MULTIPART ON FRONTEND!!!
 // TODO: Consider Franchise, theme, ...
 /// This tries to insert the file into the database as best as possible
 fn classify_new_files(db: &Connection, data_files: Vec<(PathBuf, u64)>) -> DatabaseResult<()> {
