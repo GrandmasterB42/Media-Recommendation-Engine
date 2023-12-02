@@ -74,7 +74,7 @@ fn indexing(db: &Database) -> DatabaseResult<()> {
     Ok(())
 }
 
-// TODO: Consider Franchise, theme, ...
+// TODO: Consider theme, ...
 /// This tries to insert the file into the database as best as possible
 fn classify_new_files(db: &Connection, data_files: Vec<(PathBuf, u64)>) -> DatabaseResult<()> {
     let groups = data_files
@@ -111,9 +111,37 @@ fn classify_video(
         match file_classification {
             Classification::Movie { title, part } => {
                 let (video_id, flags) = resolve_part(db, part, data_id)?;
+
+                let franchise = match path_classification {
+                    PathClassification::Movie { franchise, .. } => franchise,
+                    PathClassification::Episode { franchise, .. } => franchise,
+                }
+                .unwrap_or(title);
+
+                // find franchise or insert new
+                let franchise_id: u64 = {
+                    let id = db
+                        .query_row(
+                            "SELECT id FROM franchise WHERE title = ?1",
+                            [&franchise],
+                            |row| row.get(0),
+                        )
+                        .optional()?;
+
+                    if let Some(id) = id {
+                        id
+                    } else {
+                        db.query_row(
+                            "INSERT INTO franchise (title) VALUES (?1) RETURNING id",
+                            [&franchise],
+                            |row| row.get(0),
+                        )?
+                    }
+                };
+
                 db.execute(
-                    "INSERT INTO movies (videoid, referenceflag, title) VALUES (?1, ?2, ?3)",
-                    params![video_id, flags, title],
+                    "INSERT INTO movies (videoid, franchiseid, referenceflag, title) VALUES (?1, ?2, ?3, ?4)",
+                    params![video_id, franchise_id, flags, title],
                 )?;
             }
             Classification::Episode {
@@ -129,6 +157,7 @@ fn classify_video(
                     season,
                     series_title: None,
                     part,
+                    franchise: None,
                 };
 
                 if let PathClassification::Episode {
@@ -137,6 +166,7 @@ fn classify_video(
                     season_title,
                     season,
                     series_title,
+                    franchise,
                 } = path_classification
                 {
                     classification.episode_title = classification.episode_title.or(episode_title);
@@ -144,7 +174,30 @@ fn classify_video(
                     classification.season_title = classification.season_title.or(season_title);
                     classification.season = classification.season.or(season);
                     classification.series_title = classification.series_title.or(series_title);
+                    classification.franchise =
+                        classification.franchise.or(franchise).or(series_title);
                 }
+
+                // find franchise or insert new
+                let franchise_id: u64 = {
+                    let id = db
+                        .query_row(
+                            "SELECT id FROM franchise WHERE title = ?1",
+                            [&classification.franchise],
+                            |row| row.get(0),
+                        )
+                        .optional()?;
+
+                    if let Some(id) = id {
+                        id
+                    } else {
+                        db.query_row(
+                            "INSERT INTO franchise (title) VALUES (?1) RETURNING id",
+                            [&classification.franchise],
+                            |row| row.get(0),
+                        )?
+                    }
+                };
 
                 // Find series or insert new
                 let series_id: u64 = {
@@ -160,8 +213,8 @@ fn classify_video(
                         id
                     } else {
                         db.query_row(
-                            "INSERT INTO series (title) VALUES (?1) RETURNING id",
-                            [&classification.series_title],
+                            "INSERT INTO series (franchiseid, title) VALUES (?1, ?2) RETURNING id",
+                            params![franchise_id, &classification.series_title],
                             |row| row.get(0),
                         )?
                     }
@@ -234,6 +287,7 @@ struct EpisodeClassification<'a> {
     season: Option<u64>,
     series_title: Option<&'a str>,
     part: Option<u64>,
+    franchise: Option<&'a str>,
 }
 
 fn classify_audio(
@@ -273,21 +327,21 @@ fn infer_from_video_path(path: &Path) -> PathClassification {
         (None, None, None, None, None);
     let mut names: Vec<&str> = Vec::new();
 
-    if let Some(file_name) = components.next() {
-        // TODO: Seperate the parsing of the format parsed in this function
-        names.push(match infer_from_video_filename(Path::new(file_name)) {
-            Classification::Movie { title, .. } => title,
-            Classification::Episode {
-                title,
-                episode: e,
-                season: s,
-                ..
-            } => {
-                (season, episode) = (s, e);
-                title
-            }
-        })
-    }
+    let file_name = components.next().unwrap();
+
+    // TODO: Seperate the parsing of the format parsed in this function
+    names.push(match infer_from_video_filename(Path::new(file_name)) {
+        Classification::Movie { title, .. } => title,
+        Classification::Episode {
+            title,
+            episode: e,
+            season: s,
+            ..
+        } => {
+            (season, episode) = (s, e);
+            title
+        }
+    });
 
     // Most verbose allowed format: /series_name/"season x"/season_title/"episode x"/episode_title/file_name
     let mut i = 0;
@@ -336,26 +390,34 @@ fn infer_from_video_path(path: &Path) -> PathClassification {
             })
             .for_each(drop);
 
-        return PathClassification::Episode {
+        PathClassification::Episode {
             episode_title,
             episode,
             season_title,
             season,
             series_title,
-        };
+            franchise: series_title,
+        }
+    } else {
+        let mut names = names.into_iter().rev();
+        let _title = names.next();
+        let franchise = names.find(|&name| name != file_name);
+        PathClassification::Movie { franchise }
     }
-    PathClassification::Movie {}
 }
 
 #[derive(Debug)]
 enum PathClassification<'a> {
-    Movie {},
+    Movie {
+        franchise: Option<&'a str>,
+    },
     Episode {
         episode_title: Option<&'a str>,
         episode: Option<u64>,
         season_title: Option<&'a str>,
         season: Option<u64>,
         series_title: Option<&'a str>,
+        franchise: Option<&'a str>,
     },
 }
 

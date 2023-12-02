@@ -96,14 +96,20 @@ fn db_init(conn: Connection) -> rusqlite::Result<()> {
             videoid INTEGER REFERENCES data_files (id),
             part INTEGER NOT NULL
         )",
+        "CREATE TABLE franchise (
+            id INTEGER PRIMARY KEY,
+            title TEXT NOT NULL
+        )",
         "CREATE TABLE movies (
             id INTEGER PRIMARY KEY,
+            franchiseid INTEGER REFERENCES franchise (id),
             videoid INTEGER,
             referenceflag INTEGER NOT NULL,
             title TEXT NOT NULL
         )",
         "CREATE TABLE series (
             id INTEGER PRIMARY KEY,
+            franchiseid INTEGER REFERENCES franchise (id),
             title TEXT NULL
         )",
         "CREATE TABLE seasons (
