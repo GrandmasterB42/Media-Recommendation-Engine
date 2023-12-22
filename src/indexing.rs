@@ -292,8 +292,10 @@ fn classify_audio(
     _db: &Connection,
     audio_files: impl Iterator<Item = (FileType, PathBuf, u64)>,
 ) -> DatabaseResult<()> {
-    for (_, path, _data_id) in audio_files {
-        if os_str_conversion(path.file_name().unwrap()) != "theme.mp3" {
+    for (filetype, path, _data_id) in audio_files {
+        if !os_str_conversion(path.file_name().unwrap()).contains("theme")
+            && FileType::Audio == filetype
+        {
             warn!(
                 r#"{path:?} could not be handled, only "theme.mp3" can be inserted into the dataset"#
             );
@@ -327,7 +329,6 @@ fn infer_from_video_path(path: &Path) -> PathClassification {
 
     let file_name = components.next().unwrap();
 
-    // TODO: Seperate the parsing of the format parsed in this function
     names.push(match infer_from_video_filename(Path::new(file_name)) {
         Classification::Movie { title, .. } => title,
         Classification::Episode {
@@ -397,9 +398,13 @@ fn infer_from_video_path(path: &Path) -> PathClassification {
             franchise: series_title,
         }
     } else {
+        debug!("{names:?}, {file_name}");
         let mut names = names.into_iter().rev();
-        let _title = names.next();
-        let franchise = names.find(|&name| name != file_name);
+        let _category = names.next();
+        let franchise = names.find(|&name| {
+            let file_name = os_str_conversion(Path::new(file_name).file_stem().unwrap());
+            name != file_name
+        });
         PathClassification::Movie { franchise }
     }
 }
