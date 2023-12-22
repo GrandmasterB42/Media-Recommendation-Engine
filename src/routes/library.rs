@@ -137,7 +137,7 @@ fn top_preview(conn: Connection, id: u64, prev: &Preview) -> DatabaseResult<Stri
             let video_id = resolve_video(conn, video_id, reference_flag)?;
             (
                 title,
-                format!(r#"hx-get="/redirect/video/{video_id}" hx-target=#content"#),
+                format!(r#"hx-get="/video/{video_id}" hx-target=#all"#),
             )
         }
         Preview::Series => (
@@ -175,7 +175,7 @@ fn top_preview(conn: Connection, id: u64, prev: &Preview) -> DatabaseResult<Stri
 
             (
                 title,
-                format!(r#"hx-get="/redirect/video/{video_id}" hx-target=#content"#),
+                format!(r#"hx-get="/video/{video_id}" hx-target=#all"#),
             )
         }
     };
@@ -223,7 +223,7 @@ fn preview_categories(
                         Ok(format!(
                             r##"
                     <div class="gridcell">
-                        <img hx-get="/redirect/video/{video_id}" width="200" height="300">
+                        <img width="200" height="300" hx-get="/video/{video_id}" hx-target=#all>
                         <a title="{name}" class="name" hx-get="/preview/Movie/{id}" hx-target=#content> {name} </a>
                     </div>"##,
                         ))
@@ -304,7 +304,7 @@ fn preview_categories(
                     format!(
                         r##"
                 <div class="gridcell">
-                    <img width="200" height="300" hx-get="/redirect/video/{videoid}">
+                    <img width="200" height="300" hx-get="/video/{videoid}" hx-target=#all>
                     <a title="{name}" class="name" hx-get="/preview/Episode/{id}" hx-target=#content> {name} </a>
                 </div>
                 "##,

@@ -9,10 +9,7 @@ use axum::{
     Router,
 };
 
-use tower_http::{
-    services::{ServeDir, ServeFile},
-    trace::TraceLayer,
-};
+use tower_http::{services::ServeDir, trace::TraceLayer};
 
 use tracing::{debug, debug_span, field, info, Span};
 
@@ -26,7 +23,7 @@ use crate::{
 mod utils;
 mod database;
 mod indexing;
-mod library;
+mod routes;
 
 #[tokio::main]
 async fn main() {
@@ -41,22 +38,17 @@ async fn main() {
     let db = Database::new().expect("failed to connect to database");
 
     let app = Router::new()
-        .route("/", get(|| async { Redirect::permanent("/browse") }))
+        .route("/", get(routes::homepage))
         .route(
             "/explore",
             get(|| async { Html("<div> Nothing here yet, come back in some newer version</div>") }),
         )
-        .merge(library::library())
+        .merge(routes::library())
         .nest_service("/styles", ServeDir::new("frontend/styles"))
-        // TODO: changing #content is not reflected in the url nor the history, this is bad
-        //       The Menu bar up top isn't great, settings and logout should probably be in a dropdown to the right and clicking on library again should bring yopu back to the start of the library
-        .nest_service("/browse", ServeFile::new("frontend/content/index.html"))
-        .nest_service(
-            "/settings",
-            ServeFile::new("frontend/content/settings.html"),
-        )
+        // TODO: The Menu bar up top isn't great, settings and logout should probably be in a dropdown to the right and clicking on library again should bring yopu back to the start of the library
+        .route("/settings", get(|| async move { "" }))
         .merge(htmx())
-        .fallback_service(ServeFile::new("frontend/content/err404.html"))
+        .fallback(Redirect::permanent(r#"/?err=404"#))
         // TODO: State instead of Extension?
         .layer(db.clone())
         // TODO: How do I move this out of here?

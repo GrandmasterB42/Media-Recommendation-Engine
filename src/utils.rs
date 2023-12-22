@@ -3,7 +3,7 @@ use std::{
     str::{pattern::Pattern, FromStr},
 };
 
-use axum::{extract::Path, http, response::IntoResponse, routing::get, Router};
+use axum::{http, response::IntoResponse, routing::get, Router};
 
 use tracing::{error, warn, Level};
 use tracing_subscriber::{
@@ -52,35 +52,7 @@ pub fn htmx() -> Router {
     let htmx =
         read_to_string(relative!("frontend/htmx.js")).expect("failed to read htmx into memory");
 
-    // TODO: Document difference between redirect and location so you don't have to look into the docs
-    Router::new()
-        .route("/htmx", get(|| async { htmx }))
-        .route(
-            "/redirect/*re",
-            get(|Path(re): Path<String>| async move { HXRedirect(format!("/{re}")) }),
-        )
-        .route(
-            "/location/*loc",
-            get(|Path(loc): Path<String>| async move { HXLocation(format!("/{loc}")) }),
-        )
-}
-
-#[derive(Clone, Debug)]
-pub struct HXRedirect(pub String);
-
-impl IntoResponse for HXRedirect {
-    fn into_response(self) -> axum::response::Response {
-        ([("HX-Redirect", self.0)], ()).into_response()
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct HXLocation(pub String);
-
-impl IntoResponse for HXLocation {
-    fn into_response(self) -> axum::response::Response {
-        ([("HX-Location", self.0)], ()).into_response()
-    }
+    Router::new().route("/htmx", get(|| async { htmx }))
 }
 
 pub fn init_tracing() {
