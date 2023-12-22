@@ -42,16 +42,6 @@ impl Database {
         db_init(&mut connection).log_err_with_msg("Failed to initialize database");
         Ok(Extension(Self(pool)))
     }
-
-    // TODO: consider making this async because reasons, maybe not?
-    // -> Rethink the interface
-    pub fn run<F, T>(&self, f: F) -> DatabaseResult<T>
-    where
-        F: FnOnce(Connection) -> rusqlite::Result<T> + Send + 'static,
-    {
-        let mut conn = self.0.get()?;
-        Ok(f(&mut conn)?)
-    }
 }
 
 impl Deref for Database {

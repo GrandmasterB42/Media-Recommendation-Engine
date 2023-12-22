@@ -23,13 +23,11 @@ pub async fn periodic_indexing(db: Database) -> ! {
 }
 
 fn indexing(db: &Database) -> DatabaseResult<()> {
-    let locations: Vec<String> = db.run(|conn| {
-        let mut stmt = conn.prepare("SELECT path FROM storage_locations")?;
-        let paths = stmt
-            .query_map([], |row| row.get(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(paths)
-    })?;
+    let conn = db.get()?;
+    let locations: Vec<String> = conn
+        .prepare("SELECT path FROM storage_locations")?
+        .query_map([], |row| row.get(0))?
+        .collect::<Result<Vec<_>, _>>()?;
 
     let filesystem = locations
         .into_iter()
@@ -37,15 +35,15 @@ fn indexing(db: &Database) -> DatabaseResult<()> {
         .flat_map(scan_dir)
         .collect::<Vec<_>>();
 
-    let database_registered: Vec<PathBuf> = db.run(|conn| {
+    let database_registered: Vec<PathBuf> = {
         conn.prepare("SELECT path from data_files")?
             .query_map([], |row| Ok(PathBuf::from(row.get::<usize, String>(0)?)))?
-            .collect()
-    })?;
+            .collect::<Result<Vec<_>, _>>()
+    }?;
 
     // Note: There is probably a faster? way to do these two loops, but this is good enough for now
     // TODO: Also track changes and handle that
-    let conn = db.get()?;
+
     let mut insertion_stmt =
         conn.prepare("INSERT INTO data_files (path) VALUES (?1) RETURNING id")?;
 
@@ -66,7 +64,7 @@ fn indexing(db: &Database) -> DatabaseResult<()> {
     // Important: Don't delete any directly user facing info, is still important for recommendation, maybe consider deletion when recommending?
     for file in &database_registered {
         if !filesystem.contains(file) {
-            debug!("Want to rmove {file:?}")
+            debug!("Want to remove {file:?}")
         }
     }
 
