@@ -8,6 +8,8 @@ pub use parsing::{ParseBetween, ParseUntil};
 mod tracing;
 pub use tracing::init_tracing;
 
+use crate::routes::HXTarget;
+
 macro_rules! relative {
     ($path:expr) => {
         if cfg!(windows) {
@@ -16,6 +18,21 @@ macro_rules! relative {
             concat!(env!("CARGO_MANIFEST_DIR"), "/", $path)
         }
     };
+}
+
+pub fn frontend_redirect(route: &str, target: HXTarget) -> String {
+    frontend_redirect_explicit(
+        route,
+        &target,
+        &format!(r#"/?{target}={route}"#, target = target.as_str()),
+    )
+}
+
+pub fn frontend_redirect_explicit(route: &str, target: &HXTarget, push_url: &str) -> String {
+    format!(
+        r#"hx-get="{route}" hx-target={target} hx-push-url="{push_url}""#,
+        target = target.as_target()
+    )
 }
 
 /// A CSS response.

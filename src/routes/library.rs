@@ -11,7 +11,11 @@ use serde::Deserialize;
 use tower::util::ServiceExt;
 use tower_http::services::ServeFile;
 
-use crate::database::{Connection, Database, DatabaseResult};
+use crate::{
+    database::{Connection, Database, DatabaseResult},
+    routes::HXTarget,
+    utils::frontend_redirect,
+};
 
 // TODO: The naming of this file does not match its responsibility, either restructure or rename
 
@@ -30,9 +34,7 @@ pub fn library() -> Router {
             "/video/:id",
             get(|Path(id): Path<u64>| async move {
                 Html(format!(
-                    r#"
-                    <link rel="stylesheet" href="/styles/default.css">
-                    <video src=/content/{id} controls autoplay width="100%" height=auto> </video>"#
+                    r#"<video src=/content/{id} controls autoplay width="100%" height=auto hx-history="false"> </video>"#
                 ))
             }),
         )
@@ -66,10 +68,11 @@ async fn get_library(db: Extension<Database>) -> DatabaseResult<impl IntoRespons
     html.push_str(r#"<div class="gridcontainer">"#);
     for (id, title) in franchises {
         html.push_str(&format!(
-            r#"<div hx-get="/preview/Franchise/{id}" hx-target=#content class="gridcell">
+            r#"<div {redirect} class="gridcell">
                     <img width="200" height="300">
                     <a title="{title}" class="name"> {title} </a>
                 </div>"#,
+            redirect = frontend_redirect(&format!("/preview/Franchise/{id}"), HXTarget::Content),
         ));
     }
 
@@ -137,7 +140,7 @@ fn top_preview(conn: Connection, id: u64, prev: &Preview) -> DatabaseResult<Stri
             let video_id = resolve_video(conn, video_id, reference_flag)?;
             (
                 title,
-                format!(r#"hx-get="/video/{video_id}" hx-target=#all"#),
+                frontend_redirect(&format!("/video/{video_id}"), HXTarget::All),
             )
         }
         Preview::Series => (
@@ -175,7 +178,7 @@ fn top_preview(conn: Connection, id: u64, prev: &Preview) -> DatabaseResult<Stri
 
             (
                 title,
-                format!(r#"hx-get="/video/{video_id}" hx-target=#all"#),
+                frontend_redirect(&format!("/video/{video_id}"), HXTarget::All),
             )
         }
     };
@@ -217,18 +220,24 @@ fn preview_categories(
                 0 => Vec::new(),
                 1.. => {
                     let items = movies
-                    .into_iter()
-                    .map(|(video_id, reference_flag, name, id)| {
-                        let video_id = resolve_video(conn, video_id, reference_flag)?;
-                        Ok(format!(
-                            r##"
+                        .into_iter()
+                        .map(|(video_id, reference_flag, name, id)| {
+                            let video_id = resolve_video(conn, video_id, reference_flag)?;
+                            Ok(format!(
+                                r##"
                     <div class="gridcell">
-                        <img width="200" height="300" hx-get="/video/{video_id}" hx-target=#all>
-                        <a title="{name}" class="name" hx-get="/preview/Movie/{id}" hx-target=#content> {name} </a>
+                        <img width="200" height="300" {redirect_video}>
+                        <a title="{name}" class="name" {redirect_preview}> {name} </a>
                     </div>"##,
-                        ))
-                    })
-                    .collect::<DatabaseResult<Vec<String>>>()?;
+                                redirect_video =
+                                    frontend_redirect(&format!("/video/{video_id}"), HXTarget::All),
+                                redirect_preview = frontend_redirect(
+                                    &format!("/preview/Movie/{id}"),
+                                    HXTarget::Content
+                                ),
+                            ))
+                        })
+                        .collect::<DatabaseResult<Vec<String>>>()?;
                     vec![("<h1> Movies </h1>", items)]
                 }
             };
@@ -243,10 +252,14 @@ fn preview_categories(
                         .map(|(series_id, name)| {
                             format!(
                                 r##"
-                    <div hx-get="/preview/Series/{series_id}" hx-target="#content" class="gridcell">
+                    <div {redirect}" class="gridcell">
                         <img width="200" height="300">
                         <a title="{name}" class="name"> {name} </a>
                     </div>"##,
+                                redirect = frontend_redirect(
+                                    &format!("/preview/Series/{series_id}"),
+                                    HXTarget::Content
+                                )
                             )
                         })
                         .collect::<Vec<String>>();
@@ -283,12 +296,15 @@ fn preview_categories(
                         let name = name.unwrap_or(format!("Season {season}"));
                         format!(
                         r##"
-                            <div hx-get="/preview/Season/{season_id}" hx-target="#content" class="gridcell">
+                            <div class="gridcell" {redirect}>
                                 <img width="200" height="300">
                                 <a title="{name}" class="name"> {name} </a>
                             </div>
                         "##,
-                        )}
+                        redirect = frontend_redirect(
+                            &format!("/preview/Season/{season_id}"),
+                            HXTarget::Content
+                        ))}
                     ).collect::<Vec<String>>();
                     Ok(vec![("<h2> Seasons </h2>", items)])
                 }
@@ -304,10 +320,12 @@ fn preview_categories(
                     format!(
                         r##"
                 <div class="gridcell">
-                    <img width="200" height="300" hx-get="/video/{videoid}" hx-target=#all>
-                    <a title="{name}" class="name" hx-get="/preview/Episode/{id}" hx-target=#content> {name} </a>
+                    <img width="200" height="300" {redirect_video}>
+                    <a title="{name}" class="name" {redirect_preview}> {name} </a>
                 </div>
                 "##,
+                redirect_video = frontend_redirect(&format!("/video/{videoid}"), HXTarget::All),
+                redirect_preview = frontend_redirect(&format!("/preview/Episode/{id}"), HXTarget::Content),
                     )
                 })
                 .collect::<Vec<String>>();
