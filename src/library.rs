@@ -58,8 +58,8 @@ async fn get_library(db: Extension<Database>) -> DatabaseResult<impl IntoRespons
 
     let mut html = String::new();
 
-    let mut stmt = conn.prepare("SELECT id, title FROM franchise")?;
-    let franchises = stmt
+    let franchises = conn
+        .prepare("SELECT id, title FROM franchise")?
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
         .collect::<Result<Vec<(u64, String)>, _>>()?;
 
