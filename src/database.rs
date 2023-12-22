@@ -149,6 +149,13 @@ impl From<rusqlite::Error> for DatabaseError {
 
 impl IntoResponse for DatabaseError {
     fn into_response(self) -> axum::response::Response {
-        (http::StatusCode::INTERNAL_SERVER_ERROR).into_response()
+        #[cfg(not(debug_assertions))]
+        return (http::StatusCode::INTERNAL_SERVER_ERROR).into_response();
+        #[cfg(debug_assertions)]
+        return (
+            http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Error: {self:?}"),
+        )
+            .into_response();
     }
 }
