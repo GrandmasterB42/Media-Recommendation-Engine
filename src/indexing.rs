@@ -398,7 +398,6 @@ fn infer_from_video_path(path: &Path) -> PathClassification {
             franchise: series_title,
         }
     } else {
-        debug!("{names:?}, {file_name}");
         let mut names = names.into_iter().rev();
         let _category = names.next();
         let franchise = names.find(|&name| {
