@@ -6,7 +6,7 @@ mod parsing;
 pub use parsing::{ParseBetween, ParseUntil};
 
 mod tracing;
-pub use tracing::init_tracing;
+pub use tracing::{init_tracing, tracing_layer};
 
 use crate::routes::HXTarget;
 

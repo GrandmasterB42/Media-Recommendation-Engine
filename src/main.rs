@@ -1,22 +1,19 @@
 #![feature(pattern)]
-use std::time::Duration;
 
 use axum::{
-    extract::MatchedPath,
-    http::{Request, Response},
     response::{Html, Redirect},
     routing::get,
     Router,
 };
 
-use tower_http::{services::ServeDir, trace::TraceLayer};
+use tower_http::services::ServeDir;
 
-use tracing::{debug, debug_span, field, info, Span};
+use tracing::info;
 
 use crate::{
     database::Database,
     indexing::periodic_indexing,
-    utils::{htmx, init_tracing, Ignore},
+    utils::{htmx, init_tracing, tracing_layer, Ignore},
 };
 
 #[macro_use]
@@ -47,32 +44,11 @@ async fn main() {
         .nest_service("/styles", ServeDir::new("frontend/styles"))
         // TODO: The Menu bar up top isn't great, settings and logout should probably be in a dropdown to the right and clicking on library again should bring yopu back to the start of the library
         .route("/settings", get(|| async move { "" }))
-        .merge(htmx())
         .fallback(Redirect::permanent(r#"/?err=404"#))
+        .merge(htmx())
+        .merge(tracing_layer())
         // TODO: State instead of Extension?
-        .layer(db.clone())
-        // TODO: How do I move this out of here?
-        .layer(
-            TraceLayer::new_for_http()
-                .make_span_with(|_request: &Request<_>| {
-                    debug_span!("request", method = field::Empty, uri = field::Empty)
-                })
-                .on_request(|req: &Request<_>, span: &Span| {
-                    let method = req.method();
-                    let uri = req
-                        .extensions()
-                        .get::<MatchedPath>()
-                        .map(MatchedPath::as_str);
-                    span.record("method", method.to_string());
-                    span.record("uri", uri);
-                    debug!("Received Request");
-                })
-                .on_response(|res: &Response<_>, latency: Duration, _span: &Span| {
-                    let status = res.status();
-                    debug!("Took {latency:?} to respond with status '{status}'");
-                }),
-            // TODO: Add other meaningful options here once necessary
-        );
+        .layer(db.clone());
 
     let ip = "0.0.0.0:3000";
     info!("Starting server on {}", ip);

@@ -1,4 +1,8 @@
-use tracing::Level;
+use std::time::Duration;
+
+use axum::{extract::MatchedPath, http::Request, response::Response, Router};
+use tower_http::trace::TraceLayer;
+use tracing::{debug, debug_span, field, Level, Span};
 use tracing_subscriber::{
     filter::LevelFilter,
     fmt::{self, time::OffsetTime},
@@ -40,4 +44,28 @@ pub fn init_tracing() {
             custom_layer,
         )
         .init();
+}
+
+pub fn tracing_layer() -> Router {
+    Router::new().layer(
+        TraceLayer::new_for_http()
+            .make_span_with(|_request: &Request<_>| {
+                debug_span!("request", method = field::Empty, uri = field::Empty)
+            })
+            .on_request(|req: &Request<_>, span: &Span| {
+                let method = req.method();
+                let uri = req
+                    .extensions()
+                    .get::<MatchedPath>()
+                    .map(MatchedPath::as_str);
+                span.record("method", method.to_string());
+                span.record("uri", uri);
+                debug!("Received Request");
+            })
+            .on_response(|res: &Response<_>, latency: Duration, _span: &Span| {
+                let status = res.status();
+                debug!("Took {latency:?} to respond with status '{status}'");
+            }),
+    )
+    // TODO: Add other meaningful options here once necessary
 }
