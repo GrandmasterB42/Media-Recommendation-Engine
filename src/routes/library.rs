@@ -12,7 +12,10 @@ use tower::util::ServiceExt;
 use tower_http::services::ServeFile;
 
 use crate::{
-    database::{Connection, Database, DatabaseResult},
+    database::{
+        Connection, Database, DatabaseResult, QueryRowGetConnExt, QueryRowIntoConnExt,
+        QueryRowIntoStmtExt,
+    },
     routes::HXTarget,
     utils::frontend_redirect,
 };
@@ -48,9 +51,7 @@ async fn content(
     request: Request<Body>,
 ) -> DatabaseResult<impl IntoResponse> {
     let conn = db.get()?;
-    let path: String = conn.query_row("SELECT path FROM data_files WHERE id=?1", [id], |row| {
-        row.get(0)
-    })?;
+    let path: String = conn.query_row_get("SELECT path FROM data_files WHERE id=?1", [id])?;
     let serve_file = ServeFile::new(path);
     Ok(serve_file.oneshot(request).await)
 }
@@ -62,7 +63,7 @@ async fn get_library(db: Extension<Database>) -> DatabaseResult<impl IntoRespons
 
     let franchises = conn
         .prepare("SELECT id, title FROM franchise")?
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .query_map_into([])?
         .collect::<Result<Vec<(u64, String)>, _>>()?;
 
     html.push_str(r#"<div class="gridcontainer">"#);
@@ -108,17 +109,14 @@ fn preview(db: Extension<Database>, prev: Preview, id: u64) -> DatabaseResult<im
 
 fn top_preview(conn: Connection, id: u64, prev: &Preview) -> DatabaseResult<String> {
     fn season_title(conn: Connection, season_id: u64) -> DatabaseResult<String> {
-        let (season_title, season, seriesid): (Option<String>, u64, u64) = conn.query_row(
+        let (season_title, season, seriesid): (Option<String>, u64, u64) = conn.query_row_into(
             "SELECT title, season, seriesid FROM seasons WHERE id=?1",
             [season_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
 
         let title = season_title.unwrap_or({
             let series_title: String =
-                conn.query_row("SELECT title FROM series WHERE id=?1", [seriesid], |row| {
-                    row.get(0)
-                })?;
+                conn.query_row_get("SELECT title FROM series WHERE id=?1", [seriesid])?;
             format!("{series_title} Season {season}")
         });
         Ok(title)
@@ -126,16 +124,13 @@ fn top_preview(conn: Connection, id: u64, prev: &Preview) -> DatabaseResult<Stri
 
     let (name, image_interaction): (String, String) = match prev {
         Preview::Franchise => (
-            conn.query_row("SELECT title FROM franchise WHERE id=?1", [id], |row| {
-                row.get(0)
-            })?,
+            conn.query_row_get("SELECT title FROM franchise WHERE id=?1", [id])?,
             "".to_owned(),
         ),
         Preview::Movie => {
-            let (video_id, reference_flag, title): (u64, u64, String) = conn.query_row(
+            let (video_id, reference_flag, title): (u64, u64, String) = conn.query_row_into(
                 "SELECT videoid, referenceflag, title FROM movies WHERE id=?1",
                 [id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )?;
             let video_id = resolve_video(conn, video_id, reference_flag)?;
             (
@@ -144,9 +139,7 @@ fn top_preview(conn: Connection, id: u64, prev: &Preview) -> DatabaseResult<Stri
             )
         }
         Preview::Series => (
-            conn.query_row("SELECT title FROM series WHERE id=?1", [id], |row| {
-                row.get(0)
-            })?,
+            conn.query_row_get("SELECT title FROM series WHERE id=?1", [id])?,
             "".to_owned(),
         ),
         Preview::Season => (season_title(conn, id)?, "".to_owned()),
@@ -157,18 +150,9 @@ fn top_preview(conn: Connection, id: u64, prev: &Preview) -> DatabaseResult<Stri
                 u64,
                 u64,
                 u64,
-            ) = conn.query_row(
+            ) = conn.query_row_into(
                 "SELECT title, episode, videoid, referenceflag, seasonid FROM episodes WHERE id=?1",
                 [id],
-                |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                    ))
-                },
             )?;
 
             let season_title = season_title(conn, season_id)?;
@@ -200,20 +184,17 @@ fn preview_categories(
 ) -> DatabaseResult<Vec<(&'static str, Vec<String>)>> {
     match prev {
         Preview::Franchise => {
-            let movies = conn
+            let movies: Vec<(u64, u64, String, u64)> = conn
                 .prepare(
                     "SELECT videoid, referenceflag, title, id FROM movies WHERE franchiseid=?1",
                 )?
-                .query_map([id], |row| {
-                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-                })?
-                .collect::<Result<Vec<(u64, u64, String, u64)>, _>>()?;
+                .query_map_into([id])?
+                .collect::<Result<_, _>>()?;
 
-            let series = conn
+            let series: Vec<(u64, String)> = conn
                 .prepare("SELECT series.id, series.title FROM series WHERE franchiseid=?1")?
-                .query_map([id], |row| Ok((row.get(0)?, row.get(1)?)))?
-                .collect::<Result<Vec<(u64, String)>, _>>()
-                .unwrap();
+                .query_map_into([id])?
+                .collect::<Result<_, _>>()?;
 
             let mut out = Vec::new();
             let movies = match movies.len() {
@@ -272,24 +253,19 @@ fn preview_categories(
         }
         Preview::Movie => Ok(Vec::new()),
         Preview::Series => {
-            let season_count: u64 = conn.query_row(
-                "SELECT COUNT(*) FROM seasons WHERE seriesid=?1",
-                [id],
-                |row| row.get(0),
-            )?;
+            let season_count: u64 =
+                conn.query_row_get("SELECT COUNT(*) FROM seasons WHERE seriesid=?1", [id])?;
 
             match season_count {
                 0 => Ok(Vec::new()),
                 1 => {
                     let season_id: u64 =
-                        conn.query_row("SELECT id FROM seasons WHERE seriesid=?1", [id], |r| {
-                            r.get(0)
-                        })?;
+                        conn.query_row_get("SELECT id FROM seasons WHERE seriesid=?1", [id])?;
                     preview_categories(conn, season_id, &Preview::Season)
                 }
                 2.. => {
                     let items = conn.prepare("SELECT id, title, season FROM seasons WHERE seriesid=?1 ORDER BY season ASC")?
-                    .query_map([id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+                    .query_map_into([id])?
                     .collect::<Result<Vec<(u64, Option<String>, u64)>, _>>()?
                     .into_iter()
                     .map(|(season_id, name, season)| {
@@ -312,7 +288,7 @@ fn preview_categories(
         }
         Preview::Season => {
             let items = conn.prepare("SELECT videoid, title, episode, id FROM episodes WHERE seasonid=?1 AND referenceflag = 0 ORDER BY episode ASC")?
-                .query_map([id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))?
+                .query_map_into([id])?
                 .collect::<Result<Vec<(u64, Option<String>, u64, u64)>, _>>()?
                 .into_iter()
                 .map(|(videoid, name, episode, id)| {
@@ -337,10 +313,9 @@ fn preview_categories(
 
 fn resolve_video(conn: Connection, video_id: u64, reference_flag: u64) -> DatabaseResult<u64> {
     if reference_flag == 1 {
-        Ok(conn.query_row(
+        Ok(conn.query_row_get(
             "SELECT videoid FROM multipart WHERE id = ?1 AND part = 1",
             [video_id],
-            |row| row.get(0),
         )?)
     } else {
         Ok(video_id)

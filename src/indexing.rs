@@ -9,7 +9,9 @@ use rusqlite::{params, Connection, OptionalExtension};
 use tracing::{debug, info, warn};
 
 use crate::{
-    database::{Database, DatabaseResult},
+    database::{
+        Database, DatabaseResult, QueryRowGetConnExt, QueryRowGetStmtExt, QueryRowIntoConnExt,
+    },
     utils::{HandleErr, Ignore, ParseBetween, ParseUntil},
 };
 
@@ -26,7 +28,7 @@ fn indexing(db: &Database) -> DatabaseResult<()> {
     let conn = db.get()?;
     let locations: Vec<String> = conn
         .prepare("SELECT path FROM storage_locations")?
-        .query_map([], |row| row.get(0))?
+        .query_map_get([])?
         .collect::<Result<Vec<_>, _>>()?;
 
     let filesystem = locations
@@ -53,7 +55,7 @@ fn indexing(db: &Database) -> DatabaseResult<()> {
         .map(|file| {
             Ok((
                 file.clone(),
-                insertion_stmt.query_row([path_to_db(file)], |row| row.get(0))?,
+                insertion_stmt.query_row_get([path_to_db(file)])?,
             ))
         })
         .collect::<DatabaseResult<Vec<_>>>()?;
@@ -119,20 +121,15 @@ fn classify_video(
                 // find franchise or insert new
                 let franchise_id: u64 = {
                     let id = db
-                        .query_row(
-                            "SELECT id FROM franchise WHERE title = ?1",
-                            [&franchise],
-                            |row| row.get(0),
-                        )
+                        .query_row_get("SELECT id FROM franchise WHERE title = ?1", [&franchise])
                         .optional()?;
 
                     if let Some(id) = id {
                         id
                     } else {
-                        db.query_row(
+                        db.query_row_get(
                             "INSERT INTO franchise (title) VALUES (?1) RETURNING id",
                             [&franchise],
-                            |row| row.get(0),
                         )?
                     }
                 };
@@ -179,20 +176,18 @@ fn classify_video(
                 // find franchise or insert new
                 let franchise_id: u64 = {
                     let id = db
-                        .query_row(
+                        .query_row_get(
                             "SELECT id FROM franchise WHERE title = ?1",
                             [&classification.franchise],
-                            |row| row.get(0),
                         )
                         .optional()?;
 
                     if let Some(id) = id {
                         id
                     } else {
-                        db.query_row(
+                        db.query_row_get(
                             "INSERT INTO franchise (title) VALUES (?1) RETURNING id",
                             [&classification.franchise],
-                            |row| row.get(0),
                         )?
                     }
                 };
@@ -200,20 +195,18 @@ fn classify_video(
                 // Find series or insert new
                 let series_id: u64 = {
                     let id = db
-                        .query_row(
+                        .query_row_get(
                             "SELECT id FROM series WHERE title = ?1",
                             [&classification.series_title],
-                            |row| row.get(0),
                         )
                         .optional()?;
 
                     if let Some(id) = id {
                         id
                     } else {
-                        db.query_row(
+                        db.query_row_get(
                             "INSERT INTO series (franchiseid, title) VALUES (?1, ?2) RETURNING id",
                             params![franchise_id, &classification.series_title],
-                            |row| row.get(0),
                         )?
                     }
                 };
@@ -221,20 +214,18 @@ fn classify_video(
                 // Find season or insert new
                 let season_id: u64 = {
                     let id = db
-                        .query_row(
+                        .query_row_get(
                             "SELECT id FROM seasons WHERE seriesid = ?1 AND season = ?2",
                             params![&series_id, &classification.season],
-                            |row| row.get(0),
                         )
                         .optional()?;
 
                     if let Some(id) = id {
                         id
                     } else {
-                        db.query_row(
+                        db.query_row_get(
                             "INSERT INTO seasons (seriesid, season, title) VALUES (?1, ?2, ?3) RETURNING id",
                             params![&series_id, &classification.season, &classification.season_title],
-                            |row| row.get(0),
                         )?
                     }
                 };
@@ -243,10 +234,9 @@ fn classify_video(
                 let (multipart_id, flags) = resolve_part(db, classification.part, data_id)?;
 
                 let info: Option<(u64, u64, u64)> = db
-                    .query_row(
+                    .query_row_into(
                         "SELECT id, videoid, referenceflag FROM episodes WHERE seasonid = ?1 AND episode = ?2 AND title = ?3",
                         params![&season_id, &classification.episode, &classification.episode_title],
-                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                     )
                     .optional()?;
 
@@ -496,7 +486,7 @@ fn scan_dir(path: PathBuf) -> Vec<PathBuf> {
 fn resolve_part(db: &Connection, part: Option<u64>, data_id: u64) -> DatabaseResult<(u64, u64)> {
     Ok(if let Some(part) = part {
         (
-            db.query_row(
+            db.query_row_get(
                 "INSERT INTO multipart (id, videoid, part) VALUES 
                 (
                     IFNULL((SELECT MAX(id) + 1 FROM multipart), 0),
@@ -504,7 +494,6 @@ fn resolve_part(db: &Connection, part: Option<u64>, data_id: u64) -> DatabaseRes
                 ) 
                 RETURNING id",
                 [data_id, part],
-                |row| row.get(0),
             )?,
             1,
         )
