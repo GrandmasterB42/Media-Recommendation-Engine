@@ -1,15 +1,11 @@
 use axum::{
-    body::Body,
     extract::Path,
-    http::Request,
     response::{Html, IntoResponse},
     routing::get,
     Extension, Router,
 };
 
 use serde::Deserialize;
-use tower::util::ServiceExt;
-use tower_http::services::ServeFile;
 
 use crate::{
     database::{
@@ -20,46 +16,42 @@ use crate::{
     utils::frontend_redirect,
 };
 
-// TODO: The naming of this file does not match its responsibility, either restructure or rename
+use super::StreamingSessions;
 
 pub fn library() -> Router {
-    Router::new()
-        .route("/library", get(get_library))
-        .route(
-            "/preview/:preview/:id",
-            get(
-                |db: Extension<Database>, Path((prev, id)): Path<(Preview, u64)>| async move {
-                    preview(db, prev, id)
-                },
-            ),
-        )
-        .route(
-            "/video/:id",
-            get(|Path(id): Path<u64>| async move {
-                Html(format!(
-                    r#"<video src=/content/{id} controls autoplay width="100%" height=auto hx-history="false"> </video>"#
-                ))
-            }),
-        )
-        .route("/content/:id", get(content))
+    Router::new().route("/library", get(get_library)).route(
+        "/preview/:preview/:id",
+        get(
+            |db: Extension<Database>, Path((prev, id)): Path<(Preview, u64)>| async move {
+                preview(db, prev, id)
+            },
+        ),
+    )
 }
 
-// TODO: This will at some point need to be a different streaming solution, probably using ffmpeg or similar
-async fn content(
-    Path(id): Path<u64>,
+async fn get_library(
     db: Extension<Database>,
-    request: Request<Body>,
+    Extension(sessions): Extension<StreamingSessions>,
 ) -> DatabaseResult<impl IntoResponse> {
-    let conn = db.get()?;
-    let path: String = conn.query_row_get("SELECT path FROM data_files WHERE id=?1", [id])?;
-    let serve_file = ServeFile::new(path);
-    Ok(serve_file.oneshot(request).await)
-}
-
-async fn get_library(db: Extension<Database>) -> DatabaseResult<impl IntoResponse> {
     let conn = db.get()?;
 
     let mut html = String::new();
+
+    // If there are any current sessions, show them
+    let sessions = sessions.sessions.lock().await;
+    if !sessions.is_empty() {
+        html.push_str(r#"<div style="text-align: center; display: flex;">"#);
+        for (id, _session) in sessions.iter() {
+            html.push_str(&format!(
+                r#"<div class="gridcell"{redirect_video}>
+                    <img width="200" height="300" >
+                    <a title="session {id}" class="name"> {id} </a>
+                </div>"#,
+                redirect_video = frontend_redirect(&format!("/video/session/{id}"), HXTarget::All),
+            ));
+        }
+        html.push_str("</div>");
+    }
 
     let franchises = conn
         .prepare("SELECT id, title FROM franchise")?

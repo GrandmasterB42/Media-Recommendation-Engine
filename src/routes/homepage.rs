@@ -94,6 +94,7 @@ pub async fn homepage(location: Option<Query<Location>>) -> impl IntoResponse {
 <html lang="en">
 
 <script src="/htmx"> </script>
+<script src="/htmx_ws"> </script>
 
 <head>
     <meta charset="utf-8">

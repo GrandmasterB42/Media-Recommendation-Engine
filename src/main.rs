@@ -1,11 +1,14 @@
 #![feature(pattern)]
 
+use std::{collections::HashMap, sync::Arc};
+
 use axum::{
     response::{Html, Redirect},
     routing::get,
-    Router,
+    Extension, Router,
 };
 
+use tokio::sync::Mutex;
 use tower_http::services::ServeDir;
 
 use tracing::info;
@@ -13,6 +16,7 @@ use tracing::info;
 use crate::{
     database::Database,
     indexing::periodic_indexing,
+    routes::{streaming, StreamingSessions},
     utils::{htmx, init_tracing, tracing_layer, Ignore},
 };
 
@@ -34,6 +38,10 @@ async fn main() {
 
     let db = Database::new().expect("failed to connect to database");
 
+    let sessions = StreamingSessions {
+        sessions: Arc::new(Mutex::new(HashMap::new())),
+    };
+
     let app = Router::new()
         .route("/", get(routes::homepage))
         .route(
@@ -46,9 +54,11 @@ async fn main() {
         .route("/settings", get(|| async move { "" }))
         .fallback(Redirect::permanent(r#"/?err=404"#))
         .merge(htmx())
+        .merge(streaming())
         .merge(tracing_layer())
         // TODO: State instead of Extension?
-        .layer(db.clone());
+        .layer(db.clone())
+        .layer(Extension(sessions));
 
     let ip = "0.0.0.0:3000";
     info!("Starting server on {}", ip);

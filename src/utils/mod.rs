@@ -60,5 +60,10 @@ pub fn htmx() -> Router {
     let htmx = std::fs::read_to_string(relative!("frontend/htmx.js"))
         .expect("failed to read htmx into memory");
 
-    Router::new().route("/htmx", get(|| async { htmx }))
+    let htmx_ws = std::fs::read_to_string(relative!("frontend/ws.js"))
+        .expect("failed to read ws.js into memory");
+
+    Router::new()
+        .route("/htmx", get(|| async { htmx }))
+        .route("/htmx_ws", get(|| async { htmx_ws }))
 }
