@@ -35,25 +35,6 @@ pub fn frontend_redirect_explicit(route: &str, target: &HXTarget, push_url: &str
     )
 }
 
-/// A CSS response.
-///
-/// Will automatically set `Content-Type: text/css; charset=utf-8`.
-#[derive(Clone, Copy, Debug)]
-pub struct Css<T>(pub T);
-
-impl<T> IntoResponse for Css<T>
-where
-    T: IntoResponse,
-{
-    fn into_response(self) -> axum::response::Response {
-        (
-            [(http::header::CONTENT_TYPE, "text/css; charset=utf-8")],
-            self.0,
-        )
-            .into_response()
-    }
-}
-
 pub fn htmx() -> Router<AppState> {
     // TODO: LICENSE for Htmx?
     // Doesn't need to be a ServeFile because it rarely changes
