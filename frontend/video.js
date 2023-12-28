@@ -9,8 +9,12 @@ document.body.addEventListener("htmx:wsOpen", function (event) {
 });
 
 document.body.addEventListener("htmx:wsBeforeMessage", function (event) {
-    var data = JSON.parse(event.detail.message);
-    handleServerEvent(data)
+    try {
+        var data = JSON.parse(event.detail.message);
+        handleServerEvent(data)
+    } catch (e) {
+        // Errors can mostly be ignored as they wouldn't be fatal in any way
+    }
 });
 
 var video = document.getElementById("currentvideo");

@@ -6,7 +6,7 @@ use axum::{
         ws::{Message, WebSocket},
         Path, WebSocketUpgrade,
     },
-    http::Request,
+    http::{Request, StatusCode},
     response::{Html, IntoResponse, Redirect},
     routing::get,
     Extension, Router,
@@ -23,7 +23,10 @@ use tower::Service;
 use tower_http::services::ServeFile;
 use tracing::debug;
 
-use crate::database::{Database, DatabaseResult, QueryRowGetConnExt};
+use crate::{
+    database::{Database, DatabaseResult, QueryRowGetConnExt},
+    utils::HandleErr,
+};
 
 #[derive(Clone)]
 pub struct StreamingSessions {
@@ -50,13 +53,12 @@ enum WSMessage {
 
 // TODO: Actual permissions would be great, not just showing it on the front page
 
-// TODO: Some failures are not handled gracefully yet, restarting the server while still in a session for example
-
 pub fn streaming() -> Router {
     Router::new()
         .route("/content/:id", get(content))
         .route("/video/:id", get(new_session))
         .nest_service("/video/script", ServeFile::new("frontend/video.js"))
+        .nest_service("/video/back", ServeFile::new("frontend/back.js"))
         .route("/video/session/:id", get(session))
         .route("/video/session/ws/:id", get(ws_session))
 }
@@ -65,10 +67,14 @@ async fn content(
     Path(id): Path<u32>,
     Extension(sessions): Extension<StreamingSessions>,
     request: Request<Body>,
-) -> impl IntoResponse {
+) -> Result<impl IntoResponse, impl IntoResponse> {
     let mut sessions = sessions.sessions.lock().await;
-    let session = sessions.get_mut(&id).unwrap();
-    session.stream.call(request).await
+    let session = sessions.get_mut(&id);
+    if session.is_none() {
+        return Err((StatusCode::FORBIDDEN).into_response());
+    }
+    let session = session.unwrap();
+    Ok(session.stream.call(request).await)
 }
 
 async fn new_session(
@@ -105,11 +111,23 @@ async fn ws_session(
     ws.on_upgrade(move |socket| ws_session_callback(socket, id, sessions))
 }
 
-async fn ws_session_callback(socket: WebSocket, id: u32, sessions: StreamingSessions) {
+async fn ws_session_callback(mut socket: WebSocket, id: u32, sessions: StreamingSessions) {
     let user_id = pseudo_random();
     let (session_receiver, session_sender) = {
         let mut sessions = sessions.sessions.lock().await;
-        let session = sessions.get_mut(&id).unwrap(); // this panicks when you try to connect to invalid session
+        let session = sessions.get_mut(&id);
+        if session.is_none() {
+            socket
+            .send(Message::Text(
+                r#"<div id="notification"> This session seems to be invalid... Falling back to previous page <script src=/video/back> </script></div>"#
+                    .to_owned(),
+            ))
+            .await
+            .log_err_with_msg("failed to notify client of invalid session");
+            return;
+        }
+        let session = session.unwrap();
+
         session.receivers.push(user_id);
 
         (session.tx.subscribe(), session.tx.clone())
@@ -187,7 +205,8 @@ async fn session(Path(id): Path<u64>) -> impl IntoResponse {
     Html(format!(
         r##"
 <video id="currentvideo" src=/content/{id} controls autoplay width="100%" height=auto hx-history="false" hx-ext="ws" ws-connect="/video/session/ws/{id}"> </video>
-<script src="/video/script"></script>"##
+<script src="/video/script"></script>
+<div id="notification"> </div>"##
     ))
 }
 
