@@ -30,6 +30,7 @@ pub struct StreamingSessions {
     pub sessions: Arc<Mutex<HashMap<u32, Session>>>,
 }
 
+// TODO: Add current State to the session, so that new clients don't start playing even when stopped
 #[derive(Clone)]
 pub struct Session {
     _video_id: u64,
@@ -43,7 +44,7 @@ pub struct Session {
 enum WSMessage {
     Join,
     Pause(f32),
-    Play,
+    Play(f32),
     Seek(f32),
 }
 
@@ -74,7 +75,7 @@ async fn new_session(
     Path(id): Path<u64>,
     db: Extension<Database>,
     Extension(sessions): Extension<StreamingSessions>,
-) -> DatabaseResult<Redirect> {
+) -> DatabaseResult<impl IntoResponse> {
     let random = pseudo_random();
 
     let conn = db.get()?;
@@ -108,7 +109,7 @@ async fn ws_session_callback(socket: WebSocket, id: u32, sessions: StreamingSess
     let user_id = pseudo_random();
     let (session_receiver, session_sender) = {
         let mut sessions = sessions.sessions.lock().await;
-        let session = sessions.get_mut(&id).unwrap();
+        let session = sessions.get_mut(&id).unwrap(); // this panicks when you try to connect to invalid session
         session.receivers.push(user_id);
 
         (session.tx.subscribe(), session.tx.clone())
@@ -185,9 +186,8 @@ async fn write(
 async fn session(Path(id): Path<u64>) -> impl IntoResponse {
     Html(format!(
         r##"
-        <video id="currentvideo" src=/content/{id} controls autoplay width="100%" height=auto hx-history="false" hx-ext="ws" ws-connect="/video/session/ws/{id}"> </video>
-        <script src="/video/script"></script>
-        "##
+<video id="currentvideo" src=/content/{id} controls autoplay width="100%" height=auto hx-history="false" hx-ext="ws" ws-connect="/video/session/ws/{id}"> </video>
+<script src="/video/script"></script>"##
     ))
 }
 

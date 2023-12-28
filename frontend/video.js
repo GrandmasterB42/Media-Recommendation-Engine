@@ -3,6 +3,7 @@ var isUserSeek = true;
 var justJoined = true;
 
 // NOTE: Using the HTMX Websocket is probably not the easiest thing right now, but I hope it will help with the rest of the UI
+// TODO: the websocket seems to be undefined sometimes
 document.body.addEventListener("htmx:wsOpen", function (event) {
     ws = event.detail.socketWrapper;
 });
@@ -15,7 +16,7 @@ document.body.addEventListener("htmx:wsBeforeMessage", function (event) {
 var video = document.getElementById("currentvideo");
 
 video.addEventListener("play", function () {
-    sendVideoState("Play")
+    sendVideoState("Play", this.currentTime)
 })
 
 video.addEventListener("pause", function () {
@@ -37,15 +38,17 @@ function sendVideoState(state, time) {
 }
 
 function handleServerEvent(data) {
-    if (data === "Play") {
-        video.play()
-    } else if (data === "Join") {
+    if (data === "Join") {
         if (justJoined) {
             justJoined = false;
             return;
         }
         isUserSeek = false;
         sendVideoState("Seek", video.currentTime)
+    } else if (data.Play) {
+        isUserSeek = false;
+        video.currentTime = data.Play;
+        video.play()
     } else if (data.Pause) {
         isUserSeek = false;
         video.currentTime = data.Pause
