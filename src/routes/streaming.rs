@@ -4,12 +4,12 @@ use axum::{
     body::Body,
     extract::{
         ws::{Message, WebSocket},
-        Path, WebSocketUpgrade,
+        Path, State, WebSocketUpgrade,
     },
     http::{Request, StatusCode},
     response::{Html, IntoResponse, Redirect},
     routing::get,
-    Extension, Router,
+    Router,
 };
 
 use futures_util::{
@@ -25,12 +25,21 @@ use tracing::debug;
 
 use crate::{
     database::{Database, DatabaseResult, QueryRowGetConnExt},
+    state::AppState,
     utils::HandleErr,
 };
 
 #[derive(Clone)]
 pub struct StreamingSessions {
     pub sessions: Arc<Mutex<HashMap<u32, Session>>>,
+}
+
+impl Default for StreamingSessions {
+    fn default() -> Self {
+        Self {
+            sessions: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -46,7 +55,6 @@ pub struct Session {
     receivers: Vec<u32>,
     tx: broadcast::Sender<WSMessage>,
     state: SessionState,
-    //visibility: SessionVisibility,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,17 +68,17 @@ enum WSMessage {
 
 // TODO: Actual permissions would be great, not just showing it on the front page
 
-pub fn streaming() -> Router {
+pub fn streaming() -> Router<AppState> {
     Router::new()
         .route("/content/:id", get(content))
-        .route("/video/:id", get(new_session))
-        .route("/video/session/:id", get(session))
-        .route("/video/session/ws/:id", get(ws_session))
+        .route("/:id", get(new_session))
+        .route("/session/:id", get(session))
+        .route("/session/ws/:id", get(ws_session))
 }
 
 async fn content(
     Path(id): Path<u32>,
-    Extension(sessions): Extension<StreamingSessions>,
+    State(sessions): State<StreamingSessions>,
     request: Request<Body>,
 ) -> Result<impl IntoResponse, impl IntoResponse> {
     let mut sessions = sessions.sessions.lock().await;
@@ -84,8 +92,8 @@ async fn content(
 
 async fn new_session(
     Path(id): Path<u64>,
-    db: Extension<Database>,
-    Extension(sessions): Extension<StreamingSessions>,
+    State(sessions): State<StreamingSessions>,
+    State(db): State<Database>,
 ) -> DatabaseResult<impl IntoResponse> {
     let random = pseudo_random();
 
@@ -112,7 +120,7 @@ async fn new_session(
 async fn ws_session(
     ws: WebSocketUpgrade,
     Path(id): Path<u32>,
-    Extension(sessions): Extension<StreamingSessions>,
+    State(sessions): State<StreamingSessions>,
 ) -> impl IntoResponse {
     ws.on_upgrade(move |socket| ws_session_callback(socket, id, sessions))
 }
@@ -241,7 +249,7 @@ async fn write(
 async fn session(Path(id): Path<u64>) -> impl IntoResponse {
     Html(format!(
         r##"
-<video id="currentvideo" src=/content/{id} controls width="100%" height=auto hx-history="false" hx-ext="ws" ws-connect="/video/session/ws/{id}"> </video>
+<video id="currentvideo" src=/video/content/{id} controls width="100%" height=auto hx-history="false" hx-ext="ws" ws-connect="/video/session/ws/{id}"> </video>
 <script src="/scripts/video.js"></script>
 <div id="notification"> </div>"##
     ))

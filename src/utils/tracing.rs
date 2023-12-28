@@ -11,6 +11,8 @@ use tracing_subscriber::{
     Layer,
 };
 
+use crate::state::AppState;
+
 pub fn init_tracing() {
     let (levelfilter, level) = {
         #[cfg(debug_assertions)]
@@ -46,7 +48,7 @@ pub fn init_tracing() {
         .init();
 }
 
-pub fn tracing_layer() -> Router {
+pub fn tracing_layer() -> Router<AppState> {
     Router::new().layer(
         TraceLayer::new_for_http()
             .make_span_with(|_request: &Request<_>| {

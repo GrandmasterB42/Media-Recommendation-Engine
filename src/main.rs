@@ -1,14 +1,12 @@
 #![feature(pattern)]
 
-use std::{collections::HashMap, sync::Arc};
-
 use axum::{
     response::{Html, Redirect},
     routing::get,
-    Extension, Router,
+    Router,
 };
 
-use tokio::{net::TcpListener, sync::Mutex};
+use tokio::net::TcpListener;
 use tower_http::services::ServeDir;
 
 use tracing::info;
@@ -16,7 +14,7 @@ use tracing::info;
 use crate::{
     database::Database,
     indexing::periodic_indexing,
-    routes::{streaming, StreamingSessions},
+    state::AppState,
     utils::{htmx, init_tracing, tracing_layer, Ignore},
 };
 
@@ -25,6 +23,7 @@ mod utils;
 mod database;
 mod indexing;
 mod routes;
+mod state;
 
 #[tokio::main]
 async fn main() {
@@ -37,10 +36,6 @@ async fn main() {
     }
 
     let db = Database::new().expect("failed to connect to database");
-
-    let sessions = StreamingSessions {
-        sessions: Arc::new(Mutex::new(HashMap::new())),
-    };
 
     let app = Router::new()
         .route("/", get(routes::homepage))
@@ -55,11 +50,9 @@ async fn main() {
         .route("/settings", get(|| async move { "" }))
         .fallback(Redirect::permanent(r#"/?err=404"#))
         .merge(htmx())
-        .merge(streaming())
+        .nest("/video", routes::streaming())
         .merge(tracing_layer())
-        // TODO: State instead of Extension?
-        .layer(db.clone())
-        .layer(Extension(sessions));
+        .with_state(AppState::new(db.clone()));
 
     let ip = "0.0.0.0:3000";
 
@@ -74,7 +67,7 @@ async fn main() {
     }
     let server = server(listener, app);
 
-    tokio::spawn(periodic_indexing(db.0));
+    tokio::spawn(periodic_indexing(db));
 
     /*
     (last tested in axum 0.6)

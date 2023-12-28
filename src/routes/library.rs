@@ -1,8 +1,8 @@
 use axum::{
-    extract::Path,
+    extract::{Path, State},
     response::{Html, IntoResponse},
     routing::get,
-    Extension, Router,
+    Router,
 };
 
 use serde::Deserialize;
@@ -13,16 +13,17 @@ use crate::{
         QueryRowIntoStmtExt,
     },
     routes::HXTarget,
+    state::AppState,
     utils::frontend_redirect,
 };
 
 use super::StreamingSessions;
 
-pub fn library() -> Router {
+pub fn library() -> Router<AppState> {
     Router::new().route("/library", get(get_library)).route(
         "/preview/:preview/:id",
         get(
-            |db: Extension<Database>, Path((prev, id)): Path<(Preview, u64)>| async move {
+            |State(db): State<Database>, Path((prev, id)): Path<(Preview, u64)>| async move {
                 preview(db, prev, id)
             },
         ),
@@ -30,8 +31,8 @@ pub fn library() -> Router {
 }
 
 async fn get_library(
-    db: Extension<Database>,
-    Extension(sessions): Extension<StreamingSessions>,
+    State(sessions): State<StreamingSessions>,
+    State(db): State<Database>,
 ) -> DatabaseResult<impl IntoResponse> {
     let conn = db.get()?;
 
@@ -81,7 +82,7 @@ enum Preview {
     Episode,
 }
 
-fn preview(db: Extension<Database>, prev: Preview, id: u64) -> DatabaseResult<impl IntoResponse> {
+fn preview(db: Database, prev: Preview, id: u64) -> DatabaseResult<impl IntoResponse> {
     let mut conn = db.get()?;
     let mut html = String::new();
 

@@ -1,6 +1,6 @@
 use std::ops::Deref;
 
-use axum::{http, response::IntoResponse, Extension};
+use axum::{http, response::IntoResponse};
 use r2d2::{ManageConnection, Pool, PooledConnection};
 use tracing::info;
 
@@ -34,13 +34,13 @@ impl ManageConnection for ConnectionManager {
 pub struct Database(Pool<ConnectionManager>);
 
 impl Database {
-    pub fn new() -> DatabaseResult<Extension<Self>> {
+    pub fn new() -> DatabaseResult<Self> {
         // Note: Use Pool::builder() for more configuration options.
         let pool = Pool::new(ConnectionManager)?;
         let mut connection = pool.get()?;
         // TODO: db_init failing is bad, something should probably happen here
         db_init(&mut connection).log_err_with_msg("Failed to initialize database");
-        Ok(Extension(Self(pool)))
+        Ok(Self(pool))
     }
 }
 

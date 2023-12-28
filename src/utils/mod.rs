@@ -8,7 +8,7 @@ pub use parsing::{ParseBetween, ParseUntil};
 mod tracing;
 pub use tracing::{init_tracing, tracing_layer};
 
-use crate::routes::HXTarget;
+use crate::{routes::HXTarget, state::AppState};
 
 macro_rules! relative {
     ($path:expr) => {
@@ -54,7 +54,7 @@ where
     }
 }
 
-pub fn htmx() -> Router {
+pub fn htmx() -> Router<AppState> {
     // TODO: LICENSE for Htmx?
     // Doesn't need to be a ServeFile because it rarely changes
     let htmx = std::fs::read_to_string(relative!("frontend/scripts/htmx.js"))
