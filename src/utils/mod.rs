@@ -1,5 +1,5 @@
 mod errorext;
-use axum::{http, response::IntoResponse, routing::get, Router};
+use axum::{response::IntoResponse, routing::get, Router};
 pub use errorext::{HandleErr, Ignore};
 
 mod parsing;
