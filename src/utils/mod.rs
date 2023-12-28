@@ -57,10 +57,10 @@ where
 pub fn htmx() -> Router {
     // TODO: LICENSE for Htmx?
     // Doesn't need to be a ServeFile because it rarely changes
-    let htmx = std::fs::read_to_string(relative!("frontend/htmx.js"))
+    let htmx = std::fs::read_to_string(relative!("frontend/scripts/htmx.js"))
         .expect("failed to read htmx into memory");
 
-    let htmx_ws = std::fs::read_to_string(relative!("frontend/ws.js"))
+    let htmx_ws = std::fs::read_to_string(relative!("frontend/scripts/ws.js"))
         .expect("failed to read ws.js into memory");
 
     Router::new()

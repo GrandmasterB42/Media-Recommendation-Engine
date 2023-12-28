@@ -57,8 +57,6 @@ pub fn streaming() -> Router {
     Router::new()
         .route("/content/:id", get(content))
         .route("/video/:id", get(new_session))
-        .nest_service("/video/script", ServeFile::new("frontend/video.js"))
-        .nest_service("/video/back", ServeFile::new("frontend/back.js"))
         .route("/video/session/:id", get(session))
         .route("/video/session/ws/:id", get(ws_session))
 }
@@ -119,7 +117,7 @@ async fn ws_session_callback(mut socket: WebSocket, id: u32, sessions: Streaming
         if session.is_none() {
             socket
             .send(Message::Text(
-                r#"<div id="notification"> This session seems to be invalid... Falling back to previous page <script src=/video/back> </script></div>"#
+                r#"<div id="notification"> This session seems to be invalid... Falling back to previous page <script src=/scripts/back.js> </script></div>"#
                     .to_owned(),
             ))
             .await
@@ -205,7 +203,7 @@ async fn session(Path(id): Path<u64>) -> impl IntoResponse {
     Html(format!(
         r##"
 <video id="currentvideo" src=/content/{id} controls autoplay width="100%" height=auto hx-history="false" hx-ext="ws" ws-connect="/video/session/ws/{id}"> </video>
-<script src="/video/script"></script>
+<script src="/scripts/video.js"></script>
 <div id="notification"> </div>"##
     ))
 }

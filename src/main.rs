@@ -50,6 +50,7 @@ async fn main() {
         )
         .merge(routes::library())
         .nest_service("/styles", ServeDir::new("frontend/styles"))
+        .nest_service("/scripts", ServeDir::new("frontend/scripts"))
         // TODO: The Menu bar up top isn't great, settings and logout should probably be in a dropdown to the right and clicking on library again should bring yopu back to the start of the library
         .route("/settings", get(|| async move { "" }))
         .fallback(Redirect::permanent(r#"/?err=404"#))
