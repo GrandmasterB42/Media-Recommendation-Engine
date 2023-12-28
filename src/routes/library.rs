@@ -37,11 +37,11 @@ async fn get_library(
     let conn = db.get()?;
 
     let mut html = String::new();
+    html.push_str(r#"<link href="/styles/library.css" rel="stylesheet"/> "#);
 
-    // If there are any current sessions, show them
     let sessions = sessions.sessions.lock().await;
     if !sessions.is_empty() {
-        html.push_str(r#"<div style="text-align: center; display: flex;">"#);
+        html.push_str(r#"<div class="session_heading">"#);
         for (id, _session) in sessions.iter() {
             html.push_str(&format!(
                 r#"<div class="gridcell"{redirect_video}>
@@ -86,6 +86,8 @@ fn preview(db: Database, prev: Preview, id: u64) -> DatabaseResult<impl IntoResp
     let mut conn = db.get()?;
     let mut html = String::new();
 
+    html.push_str(r#"<link href="/styles/preview.css" rel="stylesheet"/>"#);
+    html.push_str(r#"<link href="/styles/library.css" rel="stylesheet"/>"#);
     html.push_str(&top_preview(&mut conn, id, &prev)?);
 
     for (category, items) in preview_categories(&mut conn, id, &prev)? {
@@ -161,10 +163,9 @@ fn top_preview(conn: Connection, id: u64, prev: &Preview) -> DatabaseResult<Stri
     };
 
     Ok(format!(
-        r#"
-    <div style="padding: 15px; display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: flex-start;">
+        r#"<div class="preview_top">
         <img width="250" height="375" {image_interaction}>
-        <h1 style="position:relative; left: 30px; text-align: left; flex: 1;"> {name} </h1>
+        <h1 class="preview_top_title"> {name} </h1>
     </div>
     "#,
     ))

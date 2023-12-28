@@ -1,0 +1,18 @@
+.session_heading {
+    text-align: center;
+    display: flex;
+}
+
+.gridcontainer {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+}
+
+.gridcell {
+    width: 200px;
+    height: 356px;
+    padding-right: 15px;
+    padding-left: 15px;
+    text-align: left;
+}

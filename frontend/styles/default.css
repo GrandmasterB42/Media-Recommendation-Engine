@@ -14,21 +14,14 @@ label {
     cursor: pointer;
 }
 
-input[type="radio"] {
-    display: none;
-}
-
-input[type="radio"]+label {
-    padding: 10px 20px;
-    color: #333;
-    color: #f2f2f2;
-    border-radius: 5px;
-    transition: background-color 0.3s ease;
-}
-
-input[type="radio"]:checked+label {
-    background-color: #999;
-    color: #f2f2f2;
+.name {
+    font-size: 15px;
+    float: left;
+    padding: 0px 4px;
+    max-width: 100%;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
 }
 
 #content {
@@ -39,37 +32,4 @@ input[type="radio"]:checked+label {
     text-align: center;
     font-size: 20px;
     color: #f2f2f2;
-}
-
-#logout-label {
-    background-color: #fd5050;
-    color: #f2f2f2;
-    border: none;
-    padding: 10px 20px;
-    border-radius: 5px;
-    cursor: pointer;
-}
-
-.gridcontainer {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: flex-start;
-}
-
-.gridcell {
-    width: 200px;
-    height: 356px;
-    padding-right: 15px;
-    padding-left: 15px;
-    text-align: left;
-}
-
-.name {
-    font-size: 15px;
-    float: left;
-    padding: 0px 4px;
-    max-width: 100%;
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
 }

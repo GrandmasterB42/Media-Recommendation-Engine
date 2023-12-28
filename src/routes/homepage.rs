@@ -38,11 +38,11 @@ impl HXTarget {
 pub async fn homepage(location: Option<Query<Location>>) -> impl IntoResponse {
     fn default_body(route: &str) -> String {
         format!(
-            r##"<div style="text-align: center; display: flex;">
-    <h4
-        style="color: #999; position: absolute; left: 0.5%; text-align:left; width: 20%; vertical-align: middle; margin: 0;">
-        Media Recommendation Engine</h4>
-    <div style="display: inline-block; margin: 20px;">
+            r##"
+<link rel="stylesheet" href="/styles/library_heading.css">
+<div class="heading_box">
+    <h4 class="main_title"> Media Recommendation Engine </h4>
+    <div class="center_container">
         <input checked id="radioLib" type="radio" name="section" {redirect_library}>
         <label for="radioLib"> Library </label>
 
@@ -52,8 +52,8 @@ pub async fn homepage(location: Option<Query<Location>>) -> impl IntoResponse {
         <input id="radioSet" type="radio" name="section">
         <label for="radioSet" {redirect_settings}> Settings </label>
     </div>
-    <div style="display: inline-block; position:absolute; right: 0.5%; margin: 20px 0;">
-        <input id="logout" type="button" title="logout" style="display: none;">
+    <div class="logout_container">
+        <input id="logout" class="hidden" type="button" title="logout">
         <label id="logout-label" for="logout"> Logout </label>
     </div>
 </div>
@@ -69,8 +69,9 @@ pub async fn homepage(location: Option<Query<Location>>) -> impl IntoResponse {
         match location {
             Location::Err { err } => format!(
                 r#"
-<h1 style="text-align: center; margin-top: 5%;"> Error: {err} </h1>
-<h1 hx-trigger="load delay:750ms" {redirect} style="text-align: center; margin-top: 5%;">
+<link rel="stylesheet" href="/styles/error.css"/>
+<h1 class="error_title"> Error: {err} </h1>
+<h1 hx-trigger="load delay:750ms" {redirect} class="error_title">
         Seems like something went wrong, redirecting...
 </h1>"#,
                 redirect = frontend_redirect_explicit("/", &HXTarget::All, "/")
@@ -90,7 +91,7 @@ pub async fn homepage(location: Option<Query<Location>>) -> impl IntoResponse {
     // The htmx-config here is a workaround for https://github.com/bigskysoftware/htmx/issues/497
     Html(format!(
         r##"
-        <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 
 <script src="/htmx"> </script>

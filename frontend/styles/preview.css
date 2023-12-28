@@ -1,0 +1,14 @@
+.preview_top {
+    padding: 15px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: flex-start;
+}
+
+.preview_top_title {
+    position: relative;
+    left: 30px;
+    text-align: left;
+    flex: 1;
+}
