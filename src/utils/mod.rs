@@ -64,6 +64,24 @@ pub fn htmx() -> Router<AppState> {
         .expect("failed to read ws.js into memory");
 
     Router::new()
-        .route("/htmx", get(|| async { htmx }))
-        .route("/htmx_ws", get(|| async { htmx_ws }))
+        .route(
+            "/htmx",
+            get(|| async {
+                (
+                    [("content-type", "application/javascript; charset=UTF-8")],
+                    htmx,
+                )
+                    .into_response()
+            }),
+        )
+        .route(
+            "/htmx_ws",
+            get(|| async {
+                (
+                    [("content-type", "application/javascript; charset=UTF-8")],
+                    htmx_ws,
+                )
+                    .into_response()
+            }),
+        )
 }

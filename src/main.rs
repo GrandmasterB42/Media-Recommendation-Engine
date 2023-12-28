@@ -1,13 +1,15 @@
 #![feature(pattern)]
 
 use axum::{
+    http::{HeaderName, HeaderValue},
     response::{Html, Redirect},
     routing::get,
     Router,
 };
 
 use tokio::net::TcpListener;
-use tower_http::services::ServeDir;
+use tower::ServiceBuilder;
+use tower_http::{services::ServeDir, set_header::SetResponseHeaderLayer};
 
 use tracing::info;
 
@@ -38,20 +40,19 @@ async fn main() {
     let db = Database::new().expect("failed to connect to database");
 
     let app = Router::new()
+        .merge(tracing_layer())
+        .merge(htmx())
+        .merge(dynamic_content())
+        .fallback(Redirect::permanent(r#"/?err=404"#))
         .route("/", get(routes::homepage))
+        .merge(routes::library())
         .route(
             "/explore",
             get(|| async { Html("<div> Nothing here yet, come back in some newer version</div>") }),
         )
-        .merge(routes::library())
-        .nest_service("/styles", ServeDir::new("frontend/styles"))
-        .nest_service("/scripts", ServeDir::new("frontend/scripts"))
         // TODO: The Menu bar up top isn't great, settings and logout should probably be in a dropdown to the right and clicking on library again should bring yopu back to the start of the library
         .route("/settings", get(|| async move { "" }))
-        .fallback(Redirect::permanent(r#"/?err=404"#))
-        .merge(htmx())
         .nest("/video", routes::streaming())
-        .merge(tracing_layer())
         .with_state(AppState::new(db.clone()));
 
     let ip = "0.0.0.0:3000";
@@ -92,4 +93,24 @@ async fn main() {
         _ = tokio::signal::ctrl_c() => {},
     }
     info!("Suceessfully shut down");
+}
+
+fn dynamic_content() -> Router<AppState> {
+    let styles = ServiceBuilder::new()
+        .layer(SetResponseHeaderLayer::overriding(
+            HeaderName::from_static("content-type"),
+            HeaderValue::from_static("text/css; charset=UTF-8"),
+        ))
+        .service(ServeDir::new("frontend/styles"));
+
+    let scripts = ServiceBuilder::new()
+        .layer(SetResponseHeaderLayer::overriding(
+            HeaderName::from_static("content-type"),
+            HeaderValue::from_static("application/javascript; charset=UTF-8"),
+        ))
+        .service(ServeDir::new("frontend/scripts"));
+
+    Router::new()
+        .nest_service("/styles", styles)
+        .nest_service("/scripts", scripts)
 }
