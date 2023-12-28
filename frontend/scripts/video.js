@@ -60,5 +60,11 @@ function handleServerEvent(data) {
     } else if (data.Seek) {
         isUserSeek = false;
         video.currentTime = data.Seek
+    } else if (data.State) {
+        if (data.State === "Playing") {
+            video.play()
+        } else if (data.State === "Paused") {
+            video.pause()
+        }
     }
 }

@@ -33,18 +33,25 @@ pub struct StreamingSessions {
     pub sessions: Arc<Mutex<HashMap<u32, Session>>>,
 }
 
-// TODO: Add current State to the session, so that new clients don't start playing even when stopped
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+enum SessionState {
+    Playing,
+    Paused,
+}
+
 #[derive(Clone)]
 pub struct Session {
     _video_id: u64,
     stream: ServeFile,
     receivers: Vec<u32>,
     tx: broadcast::Sender<WSMessage>,
+    state: SessionState,
     //visibility: SessionVisibility,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum WSMessage {
+    State(SessionState),
     Join,
     Pause(f32),
     Play(f32),
@@ -93,6 +100,7 @@ async fn new_session(
         stream: serve_file,
         receivers: Vec::new(),
         tx,
+        state: SessionState::Playing,
     };
 
     let mut sessions = sessions.sessions.lock().await;
@@ -109,13 +117,16 @@ async fn ws_session(
     ws.on_upgrade(move |socket| ws_session_callback(socket, id, sessions))
 }
 
-async fn ws_session_callback(mut socket: WebSocket, id: u32, sessions: StreamingSessions) {
+async fn ws_session_callback(socket: WebSocket, id: u32, sessions: StreamingSessions) {
     let user_id = pseudo_random();
+
+    let (mut sender, receiver) = socket.split();
+
     let (session_receiver, session_sender) = {
         let mut sessions = sessions.sessions.lock().await;
         let session = sessions.get_mut(&id);
         if session.is_none() {
-            socket
+            sender
             .send(Message::Text(
                 r#"<div id="notification"> This session seems to be invalid... Falling back to previous page <script src=/scripts/back.js> </script></div>"#
                     .to_owned(),
@@ -128,13 +139,21 @@ async fn ws_session_callback(mut socket: WebSocket, id: u32, sessions: Streaming
 
         session.receivers.push(user_id);
 
+        sender
+            .send(Message::Text(
+                serde_json::to_string(&WSMessage::State(session.state)).unwrap(),
+            ))
+            .await
+            .log_err_with_msg("failed to notify client of current state");
+
         (session.tx.subscribe(), session.tx.clone())
     };
 
-    let (sender, receiver) = socket.split();
-
     session_sender.send(WSMessage::Join).unwrap();
-    let mut recv_task = tokio::spawn(async move { read(receiver, session_sender).await });
+
+    let sessions_ref = sessions.sessions.clone();
+    let mut recv_task =
+        tokio::spawn(async move { read(receiver, session_sender, id, sessions_ref).await });
     let mut send_task = tokio::spawn(async move { write(sender, session_receiver).await });
 
     tokio::select! {
@@ -156,6 +175,8 @@ async fn ws_session_callback(mut socket: WebSocket, id: u32, sessions: Streaming
 async fn read(
     mut client_receiver: SplitStream<WebSocket>,
     session_sender: broadcast::Sender<WSMessage>,
+    id: u32,
+    sessions: Arc<Mutex<HashMap<u32, Session>>>,
 ) {
     while let Some(msg) = client_receiver.next().await {
         let msg = if let Ok(msg) = msg {
@@ -167,10 +188,28 @@ async fn read(
         match msg {
             Message::Text(t) => {
                 if let Ok(msg) = serde_json::from_str(&t) {
-                    let r = session_sender.send(msg);
-                    if r.is_err() {
-                        debug!("an error occured while sending a message to the session")
+                    match msg {
+                        WSMessage::Pause(_) | WSMessage::Play(_) => {
+                            let mut sessions = sessions.lock().await;
+                            let session = sessions.get_mut(&id);
+                            if session.is_none() {
+                                break;
+                            }
+                            let session = session.unwrap();
+
+                            match msg {
+                                WSMessage::Pause(_) => session.state = SessionState::Paused,
+                                WSMessage::Play(_) => session.state = SessionState::Playing,
+                                _ => unreachable!(),
+                            }
+                        }
+                        WSMessage::Seek(_) => (),
+                        WSMessage::Join | WSMessage::State(_) => unreachable!(), // These should only be sent from the server
                     }
+
+                    session_sender.send(msg).log_err_with_msg(
+                        "an error occured while sending a message to the session",
+                    );
                 } else {
                     debug!("Recieved malformed json from session websocket")
                 }
@@ -202,7 +241,7 @@ async fn write(
 async fn session(Path(id): Path<u64>) -> impl IntoResponse {
     Html(format!(
         r##"
-<video id="currentvideo" src=/content/{id} controls autoplay width="100%" height=auto hx-history="false" hx-ext="ws" ws-connect="/video/session/ws/{id}"> </video>
+<video id="currentvideo" src=/content/{id} controls width="100%" height=auto hx-history="false" hx-ext="ws" ws-connect="/video/session/ws/{id}"> </video>
 <script src="/scripts/video.js"></script>
 <div id="notification"> </div>"##
     ))
