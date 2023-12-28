@@ -8,7 +8,7 @@ use axum::{
     Extension, Router,
 };
 
-use tokio::sync::Mutex;
+use tokio::{net::TcpListener, sync::Mutex};
 use tower_http::services::ServeDir;
 
 use tracing::info;
@@ -62,12 +62,22 @@ async fn main() {
         .layer(Extension(sessions));
 
     let ip = "0.0.0.0:3000";
-    info!("Starting server on {}", ip);
-    let server = axum::Server::bind(&ip.parse().unwrap()).serve(app.into_make_service());
+
+    let listener = TcpListener::bind(ip).await.expect("failed to bind to port");
+
+    info!("Starting server on {ip}");
+
+    async fn server(listener: TcpListener, app: Router) {
+        axum::serve(listener, app)
+            .await
+            .expect("failed to start server");
+    }
+    let server = server(listener, app);
 
     tokio::spawn(periodic_indexing(db.0));
 
     /*
+    (last tested in axum 0.6)
     TODO: shutting down
     wanted to use .with_graceful_shutdown(),
     but when using:
