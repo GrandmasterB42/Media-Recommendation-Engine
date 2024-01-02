@@ -38,10 +38,10 @@ pub fn frontend_redirect_explicit(route: &str, target: &HXTarget, push_url: &str
 pub fn htmx() -> Router<AppState> {
     // TODO: LICENSE for Htmx?
     // Doesn't need to be a ServeFile because it rarely changes
-    let htmx = std::fs::read_to_string(relative!("frontend/scripts/htmx.js"))
+    let htmx = std::fs::read_to_string(relative!("../frontend/scripts/htmx.js"))
         .expect("failed to read htmx into memory");
 
-    let htmx_ws = std::fs::read_to_string(relative!("frontend/scripts/ws.js"))
+    let htmx_ws = std::fs::read_to_string(relative!("../frontend/scripts/ws.js"))
         .expect("failed to read ws.js into memory");
 
     Router::new()
