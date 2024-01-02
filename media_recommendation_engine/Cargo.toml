@@ -2,6 +2,9 @@
 name = "media_recommendation_engine"
 version = "0.1.0"
 edition = "2021"
+repository = "https://github.com/GrandmasterB42/Media-Recommendation-Engine"
+description = "Aiming to be a self-hosted media manager and recommendation site"
+readme = "../README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

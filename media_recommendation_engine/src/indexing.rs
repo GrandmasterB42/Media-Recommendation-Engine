@@ -34,7 +34,7 @@ fn indexing(db: &Database) -> DatabaseResult<()> {
     let filesystem = locations
         .into_iter()
         .map(PathBuf::from)
-        .flat_map(scan_dir)
+        .flat_map(|path: std::path::PathBuf| scan_dir(&path))
         .collect::<Vec<_>>();
 
     let database_registered: Vec<PathBuf> = {
@@ -66,7 +66,7 @@ fn indexing(db: &Database) -> DatabaseResult<()> {
     // Important: Don't delete any directly user facing info, is still important for recommendation, maybe consider deletion when recommending?
     for file in &database_registered {
         if !filesystem.contains(file) {
-            debug!("Want to remove {file:?}")
+            debug!("Want to remove {file:?}");
         }
     }
 
@@ -113,8 +113,8 @@ fn classify_video(
                 let (video_id, flags) = resolve_part(db, part, data_id)?;
 
                 let franchise = match path_classification {
-                    PathClassification::Movie { franchise, .. } => franchise,
-                    PathClassification::Episode { franchise, .. } => franchise,
+                    PathClassification::Movie { franchise, .. }
+                    | PathClassification::Episode { franchise, .. } => franchise,
                 }
                 .unwrap_or(title);
 
@@ -301,7 +301,7 @@ fn handle_unknown(
     unknown_files: impl Iterator<Item = (FileType, PathBuf, u64)>,
 ) -> DatabaseResult<()> {
     for (_, path, _) in unknown_files {
-        warn!("Could not handle {path:?}")
+        warn!("Could not handle {path:?}");
     }
     Ok(())
 }
@@ -355,7 +355,7 @@ fn infer_from_video_path(path: &Path) -> PathClassification {
                     })
                     .ignore();
             } else {
-                names.push(dir_name)
+                names.push(dir_name);
             }
         }
         i += 1;
@@ -424,7 +424,7 @@ fn infer_from_video_filename(path: &Path) -> Classification {
         metadata
             .parse_between(delim, |c: char| !c.is_ascii_digit())
             .map(|num| *var = Some(num))
-            .ignore()
+            .ignore();
     });
 
     let is_movie = season.is_none() && episode.is_none();
@@ -463,7 +463,7 @@ enum Classification<'a> {
 }
 
 // TODO: Make recursive a setting maybe?
-fn scan_dir(path: PathBuf) -> Vec<PathBuf> {
+fn scan_dir(path: &Path) -> Vec<PathBuf> {
     path.read_dir().map_or(Vec::new(), |read_dir| {
         let mut out = Vec::new();
 
@@ -473,7 +473,7 @@ fn scan_dir(path: PathBuf) -> Vec<PathBuf> {
             {
                 let path = entry.path();
                 if path.is_dir() {
-                    out.extend(scan_dir(path));
+                    out.extend(scan_dir(&path));
                 } else {
                     out.push(path);
                 }

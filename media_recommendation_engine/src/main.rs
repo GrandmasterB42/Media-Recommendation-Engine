@@ -43,7 +43,7 @@ async fn main() {
         .merge(tracing_layer())
         .merge(htmx())
         .merge(dynamic_content())
-        .fallback(Redirect::permanent(r#"/?err=404"#))
+        .fallback(Redirect::permanent("/?err=404"))
         .route("/", get(routes::homepage))
         .merge(routes::library())
         .route(

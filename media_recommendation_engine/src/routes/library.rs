@@ -24,7 +24,7 @@ pub fn library() -> Router<AppState> {
         "/preview/:preview/:id",
         get(
             |State(db): State<Database>, Path((prev, id)): Path<(Preview, u64)>| async move {
-                preview(db, prev, id)
+                preview(&db, &prev, id)
             },
         ),
     )
@@ -82,15 +82,15 @@ enum Preview {
     Episode,
 }
 
-fn preview(db: Database, prev: Preview, id: u64) -> DatabaseResult<impl IntoResponse> {
+fn preview(db: &Database, prev: &Preview, id: u64) -> DatabaseResult<impl IntoResponse> {
     let mut conn = db.get()?;
     let mut html = String::new();
 
     html.push_str(r#"<link href="/styles/preview.css" rel="stylesheet"/>"#);
     html.push_str(r#"<link href="/styles/library.css" rel="stylesheet"/>"#);
-    html.push_str(&top_preview(&mut conn, id, &prev)?);
+    html.push_str(&top_preview(&mut conn, id, prev)?);
 
-    for (category, items) in preview_categories(&mut conn, id, &prev)? {
+    for (category, items) in preview_categories(&mut conn, id, prev)? {
         html.push_str(category);
         html.push_str(r#"<div class="gridcontainer">"#);
         for item in &items {
@@ -120,7 +120,7 @@ fn top_preview(conn: Connection, id: u64, prev: &Preview) -> DatabaseResult<Stri
     let (name, image_interaction): (String, String) = match prev {
         Preview::Franchise => (
             conn.query_row_get("SELECT title FROM franchise WHERE id=?1", [id])?,
-            "".to_owned(),
+            String::new(),
         ),
         Preview::Movie => {
             let (video_id, reference_flag, title): (u64, u64, String) = conn.query_row_into(
@@ -135,9 +135,9 @@ fn top_preview(conn: Connection, id: u64, prev: &Preview) -> DatabaseResult<Stri
         }
         Preview::Series => (
             conn.query_row_get("SELECT title FROM series WHERE id=?1", [id])?,
-            "".to_owned(),
+            String::new(),
         ),
-        Preview::Season => (season_title(conn, id)?, "".to_owned()),
+        Preview::Season => (season_title(conn, id)?, String::new()),
         Preview::Episode => {
             let (title, episode, video_id, reference_flag, season_id): (
                 Option<String>,
@@ -245,7 +245,6 @@ fn preview_categories(
 
             Ok(out)
         }
-        Preview::Movie => Ok(Vec::new()),
         Preview::Series => {
             let season_count: u64 =
                 conn.query_row_get("SELECT COUNT(*) FROM seasons WHERE seriesid=?1", [id])?;
@@ -301,7 +300,7 @@ fn preview_categories(
                 .collect::<Vec<String>>();
             Ok(vec![("<h2> Episodes </h2>", items)])
         }
-        Preview::Episode => Ok(Vec::new()),
+        Preview::Episode | Preview::Movie => Ok(Vec::new()),
     }
 }
 

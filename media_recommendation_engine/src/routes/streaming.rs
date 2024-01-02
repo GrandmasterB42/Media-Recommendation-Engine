@@ -187,9 +187,7 @@ async fn read(
     sessions: Arc<Mutex<HashMap<u32, Session>>>,
 ) {
     while let Some(msg) = client_receiver.next().await {
-        let msg = if let Ok(msg) = msg {
-            msg
-        } else {
+        let Ok(msg) = msg else {
             break;
         };
 
@@ -219,13 +217,12 @@ async fn read(
                         "an error occured while sending a message to the session",
                     );
                 } else {
-                    debug!("Recieved malformed json from session websocket")
+                    debug!("Recieved malformed json from session websocket");
                 }
             }
             // TODO: Consider binary format
             Message::Binary(_) => (),
-            Message::Ping(_) => continue,
-            Message::Pong(_) => continue,
+            Message::Ping(_) | Message::Pong(_) => continue,
             Message::Close(_) => break,
         }
     }
@@ -241,7 +238,7 @@ async fn write(
         let msg = Message::Text(msg);
         let r = client_sender.send(msg).await;
         if r.is_err() {
-            debug!("an error occured while sending a message to the client")
+            debug!("an error occured while sending a message to the client");
         }
     }
 }
