@@ -5,6 +5,7 @@ use axum::{
     Router,
 };
 
+use macros::template;
 use serde::Deserialize;
 
 use crate::{
@@ -14,63 +15,79 @@ use crate::{
     },
     routes::HXTarget,
     state::AppState,
+    templating::{Template, TemplatingEngine},
     utils::frontend_redirect,
 };
 
 use super::StreamingSessions;
 
 pub fn library() -> Router<AppState> {
-    Router::new().route("/library", get(get_library)).route(
-        "/preview/:preview/:id",
-        get(
-            |State(db): State<Database>, Path((prev, id)): Path<(Preview, u64)>| async move {
-                preview(&db, &prev, id)
-            },
-        ),
-    )
+    Router::new()
+        .route("/library", get(get_library))
+        .route("/preview/:preview/:id", get(preview))
 }
 
 async fn get_library(
     State(sessions): State<StreamingSessions>,
     State(db): State<Database>,
+    State(templating): State<TemplatingEngine>,
 ) -> DatabaseResult<impl IntoResponse> {
     let conn = db.get()?;
 
-    let mut html = String::new();
-    html.push_str(r#"<link href="/styles/library.css" rel="stylesheet"/> "#);
+    template!(
+        html,
+        templating,
+        "../frontend/content/library.html",
+        LibraryTarget
+    );
+    template!(
+        grid_element,
+        templating,
+        "../frontend/content/grid_element.html",
+        GElement
+    );
 
-    let sessions = sessions.sessions.lock().await;
+    let sessions = sessions
+        .sessions
+        .lock()
+        .await
+        .iter()
+        .map(|(id, _session)| {
+            grid_element.render_only_with(&[
+                (
+                    frontend_redirect(&format!("/video/session/{id}"), HXTarget::All),
+                    GElement::RedirectEntire,
+                ),
+                (format!("session {id}"), GElement::Title),
+                (format!("{id}"), GElement::DisplayTitle),
+            ])
+        })
+        .collect::<Vec<_>>();
+
     if !sessions.is_empty() {
-        html.push_str(r#"<div class="session_heading">"#);
-        for (id, _session) in sessions.iter() {
-            html.push_str(&format!(
-                r#"<div class="gridcell"{redirect_video}>
-                    <img width="200" height="300" >
-                    <a title="session {id}" class="name"> {id} </a>
-                </div>"#,
-                redirect_video = frontend_redirect(&format!("/video/session/{id}"), HXTarget::All),
-            ));
-        }
-        html.push_str("</div>");
+        html.insert(&[(sessions.as_slice(), LibraryTarget::Sessions)])
     }
 
     let franchises = conn
         .prepare("SELECT id, title FROM franchise")?
         .query_map_into([])?
-        .collect::<Result<Vec<(u64, String)>, _>>()?;
+        .collect::<Result<Vec<(u64, String)>, _>>()?
+        .iter()
+        .map(|(id, title)| {
+            grid_element.render_only_with(&[
+                (
+                    frontend_redirect(&format!("/preview/Franchise/{id}"), HXTarget::Content),
+                    GElement::RedirectEntire,
+                ),
+                (title.clone(), GElement::Title),
+                (title.clone(), GElement::DisplayTitle),
+            ])
+        })
+        .collect::<Vec<_>>();
 
-    html.push_str(r#"<div class="gridcontainer">"#);
-    for (id, title) in franchises {
-        html.push_str(&format!(
-            r#"<div {redirect} class="gridcell">
-                    <img width="200" height="300">
-                    <a title="{title}" class="name"> {title} </a>
-                </div>"#,
-            redirect = frontend_redirect(&format!("/preview/Franchise/{id}"), HXTarget::Content),
-        ));
-    }
+    html.insert(&[(franchises.as_slice(), LibraryTarget::Franchises)]);
 
-    Ok(Html(format!("<div> {html} </div>")))
+    Ok(Html(html.render()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -82,27 +99,39 @@ enum Preview {
     Episode,
 }
 
-fn preview(db: &Database, prev: &Preview, id: u64) -> DatabaseResult<impl IntoResponse> {
-    let mut conn = db.get()?;
-    let mut html = String::new();
+async fn preview(
+    State(db): State<Database>,
+    State(templating): State<TemplatingEngine>,
+    Path((prev, id)): Path<(Preview, u64)>,
+) -> DatabaseResult<impl IntoResponse> {
+    template!(
+        preview,
+        templating,
+        "../frontend/content/preview.html",
+        PreviewTarget
+    );
 
-    html.push_str(r#"<link href="/styles/preview.css" rel="stylesheet"/>"#);
-    html.push_str(r#"<link href="/styles/library.css" rel="stylesheet"/>"#);
-    html.push_str(&top_preview(&mut conn, id, prev)?);
-
-    for (category, items) in preview_categories(&mut conn, id, prev)? {
-        html.push_str(category);
-        html.push_str(r#"<div class="gridcontainer">"#);
-        for item in &items {
-            html.push_str(item);
-        }
-        html.push_str("</div>");
+    preview.insert(&[(
+        top_preview(&db, &templating, id, &prev).await?,
+        PreviewTarget::Top,
+    )]);
+    for (category, items) in preview_categories(&db, &templating, id, &prev).await? {
+        preview.insert(&[(category, PreviewTarget::Grid)]);
+        preview.insert(&[(r#"<div class="gridcontainer">"#, PreviewTarget::Grid)]);
+        preview.insert(&[(items.as_slice(), PreviewTarget::Grid)]);
+        preview.insert(&[("</div>", PreviewTarget::Grid)]);
     }
-
-    Ok(Html(format!("<div> {html} </div>")))
+    Ok(Html(preview.render()))
 }
 
-fn top_preview(conn: Connection, id: u64, prev: &Preview) -> DatabaseResult<String> {
+async fn top_preview(
+    conn: &Database,
+    templating: &TemplatingEngine,
+    id: u64,
+    prev: &Preview,
+) -> DatabaseResult<String> {
+    let conn = &mut conn.get()?;
+
     fn season_title(conn: Connection, season_id: u64) -> DatabaseResult<String> {
         let (season_title, season, seriesid): (Option<String>, u64, u64) = conn.query_row_into(
             "SELECT title, season, seriesid FROM seasons WHERE id=?1",
@@ -162,145 +191,181 @@ fn top_preview(conn: Connection, id: u64, prev: &Preview) -> DatabaseResult<Stri
         }
     };
 
-    Ok(format!(
-        r#"<div class="preview_top">
-        <img width="250" height="375" {image_interaction}>
-        <h1 class="preview_top_title"> {name} </h1>
-    </div>
-    "#,
-    ))
+    template!(
+        top_preview,
+        templating,
+        "../frontend/content/large_preview_image.html",
+        ImageTarget
+    );
+
+    Ok(top_preview.render_only_with(&[
+        (image_interaction, ImageTarget::ImageInteraction),
+        (name, ImageTarget::Title),
+    ]))
 }
 
-fn preview_categories(
-    conn: Connection,
+async fn preview_categories(
+    db: &Database,
+    templating: &TemplatingEngine,
     id: u64,
     prev: &Preview,
 ) -> DatabaseResult<Vec<(&'static str, Vec<String>)>> {
-    match prev {
-        Preview::Franchise => {
-            let movies: Vec<(u64, u64, String, u64)> = conn
-                .prepare(
-                    "SELECT videoid, referenceflag, title, id FROM movies WHERE franchiseid=?1",
-                )?
-                .query_map_into([id])?
-                .collect::<Result<_, _>>()?;
+    let conn = &mut db.get()?;
+    template!(
+        grid_element,
+        templating,
+        "../frontend/content/grid_element.html",
+        GElement
+    );
 
-            let series: Vec<(u64, String)> = conn
-                .prepare("SELECT series.id, series.title FROM series WHERE franchiseid=?1")?
-                .query_map_into([id])?
-                .collect::<Result<_, _>>()?;
+    return inner(conn, id, prev, grid_element);
 
-            let mut out = Vec::new();
-            let movies = match movies.len() {
-                0 => Vec::new(),
-                1.. => {
-                    let items = movies
-                        .into_iter()
-                        .map(|(video_id, reference_flag, name, id)| {
-                            let video_id = resolve_video(conn, video_id, reference_flag)?;
-                            Ok(format!(
-                                r##"
-                    <div class="gridcell">
-                        <img width="200" height="300" {redirect_video}>
-                        <a title="{name}" class="name" {redirect_preview}> {name} </a>
-                    </div>"##,
-                                redirect_video =
-                                    frontend_redirect(&format!("/video/{video_id}"), HXTarget::All),
-                                redirect_preview = frontend_redirect(
-                                    &format!("/preview/Movie/{id}"),
-                                    HXTarget::Content
-                                ),
-                            ))
-                        })
-                        .collect::<DatabaseResult<Vec<String>>>()?;
-                    vec![("<h1> Movies </h1>", items)]
-                }
-            };
-            out.extend(movies);
+    fn inner(
+        conn: Connection,
+        id: u64,
+        prev: &Preview,
+        template: Template<GElement>,
+    ) -> DatabaseResult<Vec<(&'static str, Vec<String>)>> {
+        match prev {
+            Preview::Franchise => {
+                let movies: Vec<(u64, u64, String, u64)> = conn
+                    .prepare(
+                        "SELECT videoid, referenceflag, title, id FROM movies WHERE franchiseid=?1",
+                    )?
+                    .query_map_into([id])?
+                    .collect::<Result<_, _>>()?;
 
-            let series = match series.len() {
-                0 => Vec::new(),
-                1 => preview_categories(conn, series[0].0, &Preview::Series)?,
-                2.. => {
-                    let items = series
-                        .into_iter()
-                        .map(|(series_id, name)| {
-                            format!(
-                                r##"
-                    <div {redirect}" class="gridcell">
-                        <img width="200" height="300">
-                        <a title="{name}" class="name"> {name} </a>
-                    </div>"##,
-                                redirect = frontend_redirect(
-                                    &format!("/preview/Series/{series_id}"),
-                                    HXTarget::Content
-                                )
-                            )
-                        })
-                        .collect::<Vec<String>>();
-                    vec![("<h1> Series </h1>", items)]
-                }
-            };
-            out.extend(series);
+                let series: Vec<(u64, String)> = conn
+                    .prepare("SELECT series.id, series.title FROM series WHERE franchiseid=?1")?
+                    .query_map_into([id])?
+                    .collect::<Result<_, _>>()?;
 
-            Ok(out)
-        }
-        Preview::Series => {
-            let season_count: u64 =
-                conn.query_row_get("SELECT COUNT(*) FROM seasons WHERE seriesid=?1", [id])?;
+                let mut out = Vec::new();
+                let movies = match movies.len() {
+                    0 => Vec::new(),
+                    1.. => {
+                        let items = movies
+                            .into_iter()
+                            .map(|(video_id, reference_flag, name, id)| {
+                                let video_id = resolve_video(conn, video_id, reference_flag)?;
+                                Ok(template.render_only_with(&[
+                                    (
+                                        frontend_redirect(
+                                            &format!("/video/{video_id}"),
+                                            HXTarget::All,
+                                        ),
+                                        GElement::RedirectImg,
+                                    ),
+                                    (
+                                        frontend_redirect(
+                                            &format!("/preview/Movie/{id}"),
+                                            HXTarget::Content,
+                                        ),
+                                        GElement::RedirectTitle,
+                                    ),
+                                    (name.clone(), GElement::Title),
+                                    (name.clone(), GElement::DisplayTitle),
+                                ]))
+                            })
+                            .collect::<DatabaseResult<Vec<String>>>()?;
+                        vec![("<h1> Movies </h1>", items)]
+                    }
+                };
+                out.extend(movies);
 
-            match season_count {
-                0 => Ok(Vec::new()),
-                1 => {
-                    let season_id: u64 =
-                        conn.query_row_get("SELECT id FROM seasons WHERE seriesid=?1", [id])?;
-                    preview_categories(conn, season_id, &Preview::Season)
-                }
-                2.. => {
-                    let items = conn.prepare("SELECT id, title, season FROM seasons WHERE seriesid=?1 ORDER BY season ASC")?
+                let series = match series.len() {
+                    0 => Vec::new(),
+                    1 => inner(conn, series[0].0, &Preview::Series, template)?,
+                    2.. => {
+                        let items = series
+                            .into_iter()
+                            .map(|(series_id, name)| {
+                                template.render_only_with(&[
+                                    (
+                                        frontend_redirect(
+                                            &format!("/preview/Series/{series_id}"),
+                                            HXTarget::Content,
+                                        ),
+                                        GElement::RedirectEntire,
+                                    ),
+                                    (name.clone(), GElement::Title),
+                                    (name.clone(), GElement::DisplayTitle),
+                                ])
+                            })
+                            .collect::<Vec<String>>();
+                        vec![("<h1> Series </h1>", items)]
+                    }
+                };
+                out.extend(series);
+
+                Ok(out)
+            }
+            Preview::Series => {
+                let season_count: u64 =
+                    conn.query_row_get("SELECT COUNT(*) FROM seasons WHERE seriesid=?1", [id])?;
+
+                match season_count {
+                    0 => Ok(Vec::new()),
+                    1 => {
+                        let season_id: u64 =
+                            conn.query_row_get("SELECT id FROM seasons WHERE seriesid=?1", [id])?;
+                        inner(conn, season_id, &Preview::Season, template)
+                    }
+                    2.. => {
+                        let items = conn.prepare("SELECT id, title, season FROM seasons WHERE seriesid=?1 ORDER BY season ASC")?
                     .query_map_into([id])?
                     .collect::<Result<Vec<(u64, Option<String>, u64)>, _>>()?
                     .into_iter()
                     .map(|(season_id, name, season)| {
-                        let name = name.unwrap_or(format!("Season {season}"));
-                        format!(
-                        r##"
-                            <div class="gridcell" {redirect}>
-                                <img width="200" height="300">
-                                <a title="{name}" class="name"> {name} </a>
-                            </div>
-                        "##,
-                        redirect = frontend_redirect(
-                            &format!("/preview/Season/{season_id}"),
-                            HXTarget::Content
-                        ))}
+                            let name = name.unwrap_or(format!("Season {season}"));
+                            template.render_only_with(&[
+                            (
+                                frontend_redirect(
+                                    &format!("/preview/Season/{season_id}"),
+                                    HXTarget::Content,
+                                ),
+                                GElement::RedirectEntire,
+                            ),
+                            (name.clone(), GElement::Title),
+                            (name.clone(), GElement::DisplayTitle),
+                        ])
+                        }
                     ).collect::<Vec<String>>();
-                    Ok(vec![("<h2> Seasons </h2>", items)])
+                        Ok(vec![("<h2> Seasons </h2>", items)])
+                    }
                 }
             }
-        }
-        Preview::Season => {
-            let items = conn.prepare("SELECT videoid, title, episode, id FROM episodes WHERE seasonid=?1 AND referenceflag = 0 ORDER BY episode ASC")?
+            Preview::Season => {
+                let items = conn.prepare("SELECT videoid, title, episode, id FROM episodes WHERE seasonid=?1 AND referenceflag = 0 ORDER BY episode ASC")?
                 .query_map_into([id])?
                 .collect::<Result<Vec<(u64, Option<String>, u64, u64)>, _>>()?
                 .into_iter()
                 .map(|(videoid, name, episode, id)| {
                     let name = name.unwrap_or(format!("Episode {episode}"));
-                    format!(
-                        r##"
-                <div class="gridcell">
-                    <img width="200" height="300" {redirect_video}>
-                    <a title="{name}" class="name" {redirect_preview}> {name} </a>
-                </div>
-                "##,
-                redirect_video = frontend_redirect(&format!("/video/{videoid}"), HXTarget::All),
-                redirect_preview = frontend_redirect(&format!("/preview/Episode/{id}"), HXTarget::Content),
-                    )
+                    template.render_only_with(&[
+                        (
+                            frontend_redirect(
+                                &format!("/video/{videoid}"),
+                                HXTarget::All,
+                            ),
+                            GElement::RedirectImg,
+                        ),
+                        (
+                            frontend_redirect(
+                                &format!("/preview/Episode/{id}"),
+                                HXTarget::Content,
+                            ),
+                            GElement::RedirectTitle,
+                        ),
+                        (name.clone(), GElement::Title),
+                        (name.clone(), GElement::DisplayTitle),
+                    ])
                 })
                 .collect::<Vec<String>>();
-            Ok(vec![("<h2> Episodes </h2>", items)])
+                Ok(vec![("<h2> Episodes </h2>", items)])
+            }
+            Preview::Episode | Preview::Movie => Ok(Vec::new()),
         }
-        Preview::Episode | Preview::Movie => Ok(Vec::new()),
     }
 }
 

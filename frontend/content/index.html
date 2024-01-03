@@ -1,0 +1,21 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+
+<script src="/htmx"> </script>
+<script src="/htmx_ws"> </script>
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!--- The htmx-config here is a workaround for https://github.com/bigskysoftware/htmx/issues/497 --->
+    <meta name="htmx-config" content='{"historyCacheSize": 0, "refreshOnHistoryMiss" : false}''>
+    <link rel="stylesheet" href="/styles/default.css">
+    <title> Media Recommendation Engine </title>
+</head>
+
+<body id="{{All}}">
+    {{Body}}
+</body>
+
+</html>

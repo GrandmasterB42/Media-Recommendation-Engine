@@ -9,6 +9,8 @@ readme = "../README.md"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+macros = { path = "../macros" }
+
 axum = { version = "0.7", features = ["macros", "query", "ws"] }
 time = { version = "0.3.30", features = ["local-offset"] }
 r2d2 = "0.8.10"

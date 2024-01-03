@@ -1,12 +1,14 @@
 #![feature(pattern)]
 
 use axum::{
+    extract::State,
     http::{HeaderName, HeaderValue},
     response::{Html, Redirect},
     routing::get,
     Router,
 };
 
+use macros::template;
 use tokio::net::TcpListener;
 use tower::ServiceBuilder;
 use tower_http::{services::ServeDir, set_header::SetResponseHeaderLayer};
@@ -17,6 +19,7 @@ use crate::{
     database::Database,
     indexing::periodic_indexing,
     state::AppState,
+    templating::TemplatingEngine,
     utils::{htmx, init_tracing, tracing_layer, Ignore},
 };
 
@@ -26,6 +29,7 @@ mod database;
 mod indexing;
 mod routes;
 mod state;
+mod templating;
 
 #[tokio::main]
 async fn main() {
@@ -48,7 +52,15 @@ async fn main() {
         .merge(routes::library())
         .route(
             "/explore",
-            get(|| async { Html("<div> Nothing here yet, come back in some newer version</div>") }),
+            get(|templating: State<TemplatingEngine>| async move {
+                template!(
+                    settings,
+                    templating,
+                    "../frontend/content/settings.html",
+                    _T
+                );
+                Html(settings.render())
+            }),
         )
         // TODO: The Menu bar up top isn't great, settings and logout should probably be in a dropdown to the right and clicking on library again should bring yopu back to the start of the library
         .route("/settings", get(|| async move { "" }))

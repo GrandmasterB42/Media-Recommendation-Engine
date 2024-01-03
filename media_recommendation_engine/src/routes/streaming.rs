@@ -17,6 +17,7 @@ use futures_util::{
     SinkExt, StreamExt,
 };
 
+use macros::template;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, Mutex};
 use tower::Service;
@@ -26,6 +27,7 @@ use tracing::debug;
 use crate::{
     database::{Database, DatabaseResult, QueryRowGetConnExt},
     state::AppState,
+    templating::TemplatingEngine,
     utils::HandleErr,
 };
 
@@ -121,11 +123,23 @@ async fn ws_session(
     ws: WebSocketUpgrade,
     Path(id): Path<u32>,
     State(sessions): State<StreamingSessions>,
+    State(templating): State<TemplatingEngine>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| ws_session_callback(socket, id, sessions))
+    ws.on_upgrade(move |socket| ws_session_callback(socket, templating, id, sessions))
 }
 
-async fn ws_session_callback(socket: WebSocket, id: u32, sessions: StreamingSessions) {
+async fn ws_session_callback(
+    socket: WebSocket,
+    templating: TemplatingEngine,
+    id: u32,
+    sessions: StreamingSessions,
+) {
+    template!(
+        notification,
+        templating,
+        "../frontend/content/notification.html",
+        NotificationTarget
+    );
     let user_id = pseudo_random();
 
     let (mut sender, receiver) = socket.split();
@@ -135,12 +149,15 @@ async fn ws_session_callback(socket: WebSocket, id: u32, sessions: StreamingSess
         let session = sessions.get_mut(&id);
         if session.is_none() {
             sender
-            .send(Message::Text(
-                r#"<div id="notification"> This session seems to be invalid... Falling back to previous page <script src=/scripts/back.js> </script></div>"#
-                    .to_owned(),
-            ))
-            .await
-            .log_err_with_msg("failed to notify client of invalid session");
+                .send(Message::Text(notification.render_only_with(&[
+                    (
+                        "This session seems to be invalid... Falling back to previous page",
+                        NotificationTarget::Msg,
+                    ),
+                    ("/scripts/back.js", NotificationTarget::Script),
+                ])))
+                .await
+                .log_err_with_msg("failed to notify client of invalid session");
             return;
         }
         let session = session.unwrap();
@@ -243,13 +260,15 @@ async fn write(
     }
 }
 
-async fn session(Path(id): Path<u64>) -> impl IntoResponse {
-    Html(format!(
-        r##"
-<video id="currentvideo" src=/video/content/{id} controls width="100%" height=auto hx-history="false" hx-ext="ws" ws-connect="/video/session/ws/{id}"> </video>
-<script src="/scripts/video.js"></script>
-<div id="notification"> </div>"##
-    ))
+async fn session(
+    State(templating): State<TemplatingEngine>,
+    Path(id): Path<u64>,
+) -> impl IntoResponse {
+    template!(video, templating, "../frontend/content/video.html", Target);
+    Html(video.render_only_with(&[
+        (id.to_string(), Target::ContentID),
+        (id.to_string(), Target::SessionID),
+    ]))
 }
 
 fn pseudo_random() -> u32 {
