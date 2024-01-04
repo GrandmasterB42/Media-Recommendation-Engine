@@ -10,6 +10,9 @@ document.body.addEventListener("htmx:wsOpen", function (event) {
 
 document.body.addEventListener("htmx:wsBeforeMessage", function (event) {
     try {
+        if (ws == undefined) {
+            ws = event.detail.socketWrapper;
+        }
         var data = JSON.parse(event.detail.message);
         handleServerEvent(data)
     } catch (e) {
@@ -20,21 +23,29 @@ document.body.addEventListener("htmx:wsBeforeMessage", function (event) {
 var video = document.getElementById("currentvideo");
 
 video.addEventListener("play", function () {
-    sendVideoState("Play", this.currentTime)
+    sendVideoState("Play", this.currentTime);
 })
 
 video.addEventListener("pause", function () {
-    sendVideoState("Pause", this.currentTime)
+    sendVideoState("Pause", this.currentTime);
 })
 
 video.addEventListener("seeked", function () {
-    if (isUserSeek) {
-        sendVideoState("Seek", this.currentTime)
+    if (!justJoined) {
+        if (isUserSeek) {
+            sendVideoState("Seek", this.currentTime)
+        }
+        isUserSeek = true;
     }
-    isUserSeek = true;
 })
 
 function sendVideoState(state, time) {
+    if (justJoined) {
+        var message = {};
+        message["Join"] = null;
+        ws.send(JSON.stringify(message));
+        return;
+    }
     var message = {};
     message[state] = time !== undefined ? time : null;
     var message = JSON.stringify(message);
@@ -52,7 +63,11 @@ function handleServerEvent(data) {
     } else if (data.Play) {
         isUserSeek = false;
         video.currentTime = data.Play;
-        video.play()
+        try {
+            video.play()
+        } catch (e) {
+            // I know this will fail before first interaction
+        }
     } else if (data.Pause) {
         isUserSeek = false;
         video.currentTime = data.Pause
@@ -62,9 +77,13 @@ function handleServerEvent(data) {
         video.currentTime = data.Seek
     } else if (data.State) {
         if (data.State === "Playing") {
-            video.play()
+            try {
+                video.play();
+            } catch (e) {
+                // I know this will fail before first interaction
+            }
         } else if (data.State === "Paused") {
-            video.pause()
+            video.pause();
         }
     }
 }

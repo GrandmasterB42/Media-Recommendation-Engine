@@ -169,8 +169,6 @@ async fn ws_session_callback(socket: WebSocket, id: u32, sessions: StreamingSess
         (session.tx.subscribe(), session.tx.clone())
     };
 
-    session_sender.send(WSMessage::Join).unwrap();
-
     let sessions_ref = sessions.sessions.clone();
     let mut recv_task =
         tokio::spawn(async move { read(receiver, session_sender, id, sessions_ref).await });
@@ -222,7 +220,15 @@ async fn read(
                             }
                         }
                         WSMessage::Seek(_) => (),
-                        WSMessage::Join | WSMessage::State(_) => unreachable!(), // These should only be sent from the server
+                        WSMessage::Join => {
+                            let state = sessions.lock().await[&id].state;
+                            session_sender
+                                .send(WSMessage::State(state))
+                                .log_err_with_msg(
+                                    "an error occured while sending a message to the session",
+                                );
+                        }
+                        WSMessage::State(_) => unreachable!(), // This should only be sent from the server
                     }
 
                     session_sender.send(msg).log_err_with_msg(
