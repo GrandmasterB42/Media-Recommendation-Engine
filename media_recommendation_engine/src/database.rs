@@ -1,10 +1,9 @@
 use std::ops::Deref;
 
-use axum::{http, response::IntoResponse};
 use r2d2::{ManageConnection, Pool, PooledConnection};
 use tracing::info;
 
-use crate::utils::HandleErr;
+use crate::{state::AppResult, utils::HandleErr};
 
 pub struct ConnectionManager;
 
@@ -34,7 +33,7 @@ impl ManageConnection for ConnectionManager {
 pub struct Database(Pool<ConnectionManager>);
 
 impl Database {
-    pub fn new() -> DatabaseResult<Self> {
+    pub fn new() -> AppResult<Self> {
         // Note: Use Pool::builder() for more configuration options.
         let pool = Pool::new(ConnectionManager)?;
         let mut connection = pool.get()?;
@@ -125,39 +124,6 @@ fn db_init(conn: Connection) -> rusqlite::Result<()> {
     tx.commit()?;
 
     Ok(())
-}
-
-pub type DatabaseResult<T> = Result<T, DatabaseError>;
-
-#[derive(Debug)]
-pub enum DatabaseError {
-    Database(rusqlite::Error),
-    Pool(r2d2::Error),
-}
-
-impl From<r2d2::Error> for DatabaseError {
-    fn from(e: r2d2::Error) -> Self {
-        DatabaseError::Pool(e)
-    }
-}
-
-impl From<rusqlite::Error> for DatabaseError {
-    fn from(e: rusqlite::Error) -> Self {
-        DatabaseError::Database(e)
-    }
-}
-
-impl IntoResponse for DatabaseError {
-    fn into_response(self) -> axum::response::Response {
-        #[cfg(not(debug_assertions))]
-        return (http::StatusCode::INTERNAL_SERVER_ERROR).into_response();
-        #[cfg(debug_assertions)]
-        return (
-            http::StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Error: {self:?}"),
-        )
-            .into_response();
-    }
 }
 
 type Mapfn<T> = for<'a, 'b> fn(&'a rusqlite::Row<'b>) -> Result<T, rusqlite::Error>;

@@ -20,14 +20,6 @@ macro_rules! relative {
     };
 }
 
-pub fn relative_str(path: &str) -> String {
-    if cfg!(windows) {
-        format!(r#"{}\{path}"#, env!("CARGO_MANIFEST_DIR"))
-    } else {
-        format!(r#"{}/{path}"#, env!("CARGO_MANIFEST_DIR"))
-    }
-}
-
 pub fn frontend_redirect(route: &str, target: HXTarget) -> String {
     frontend_redirect_explicit(
         route,

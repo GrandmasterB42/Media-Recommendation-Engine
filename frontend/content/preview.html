@@ -1,6 +1,13 @@
 <div>
     <link href="/styles/preview.css" rel="stylesheet" />
     <link href="/styles/library.css" rel="stylesheet" />
-    {{Top}}
-    {{Grid}}
+    {{top|safe}}
+    {% for (category, items) in categories %}
+    {{category|safe}}
+    <div class="gridcontainer">
+        {% for item in items %}
+        {{item|safe}}
+        {% endfor %}
+    </div>
+    {% endfor %}
 </div>

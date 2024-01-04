@@ -1,10 +1,14 @@
 <div>
     <link href="/styles/library.css" rel="stylesheet" />
     <div class="session_heading">
-        {{Sessions}}
+        {% for session in sessions %}
+        {{session|safe}}
+        {% endfor %}
     </div>
 
     <div class="gridcontainer">
-        {{Franchises}}
+        {% for franchise in franchises %}
+        {{franchise|safe}}
+        {% endfor %}
     </div>
 </div>

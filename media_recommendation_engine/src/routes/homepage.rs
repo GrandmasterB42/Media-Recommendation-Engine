@@ -1,12 +1,9 @@
-use axum::{
-    extract::{Query, State},
-    response::{Html, IntoResponse},
-};
-use macros::template;
+use askama::Template;
+use axum::{debug_handler, extract::Query};
 use serde::Deserialize;
 
 use crate::{
-    templating::TemplatingEngine,
+    state::AppResult,
     utils::{frontend_redirect, frontend_redirect_explicit},
 };
 
@@ -39,69 +36,63 @@ impl HXTarget {
     }
 }
 
-pub async fn homepage(
-    templating: State<TemplatingEngine>,
-    location: Option<Query<Location>>,
-) -> impl IntoResponse {
-    template!(
-        body_html,
-        templating,
-        "../frontend/content/homepage.html",
-        HomepageTarget
-    );
+#[derive(Template)]
+#[template(path = "../frontend/content/index.html")]
+pub struct Index {
+    body: String,
+    all: String,
+}
 
-    #[rustfmt::skip]
-    body_html.insert(&[
-        (frontend_redirect("/library", HXTarget::Content), HomepageTarget::RedirectLibrary),
-        (frontend_redirect("/explore", HXTarget::Content), HomepageTarget::RedirectExplore),
-        (frontend_redirect("/settings", HXTarget::All), HomepageTarget::RedirectSettings),
-        (HXTarget::Content.as_str().to_owned(), HomepageTarget::Content),
-    ]);
+#[derive(Template)]
+#[template(path = "../frontend/content/homepage.html")]
+struct Homepage<'a> {
+    redirect_library: &'a str,
+    redirect_explore: &'a str,
+    redirect_settings: &'a str,
+    content: &'a str,
+    route: &'a str,
+}
+
+#[derive(Template)]
+#[template(path = "../frontend/content/error.html")]
+struct Error<'a> {
+    err: &'a str,
+    redirect: &'a str,
+}
+
+#[debug_handler]
+pub async fn homepage(location: Option<Query<Location>>) -> AppResult<Index> {
+    let mut body_html = Homepage {
+        redirect_library: &frontend_redirect("/library", HXTarget::Content),
+        redirect_explore: &frontend_redirect("/explore", HXTarget::Content),
+        redirect_settings: &frontend_redirect("/settings", HXTarget::All),
+        content: HXTarget::Content.as_str(),
+        route: "",
+    };
 
     let body = if let Some(Query(location)) = location {
         match location {
-            Location::Err { err } => {
-                template!(
-                    error,
-                    templating,
-                    "../frontend/content/error.html",
-                    ErrorTarget
-                );
-
-                error.insert(&[
-                    (err, ErrorTarget::Err),
-                    (
-                        frontend_redirect_explicit("/", &HXTarget::All, "/"),
-                        ErrorTarget::Redirect,
-                    ),
-                ]);
-                error.render()
+            Location::Err { err } => Error {
+                err: &err,
+                redirect: &frontend_redirect_explicit("/", &HXTarget::All, "/"),
             }
+            .render(),
             Location::Content { content } => {
-                body_html.insert(&[(content, HomepageTarget::Route)]);
+                body_html.route = &content;
                 body_html.render()
             }
-            Location::All { all } => {
-                format!(
-                    r#"<div hx-trigger="load" {redirect}> </div>"#,
-                    redirect = frontend_redirect(&all, HXTarget::All)
-                )
-            }
+            Location::All { all } => Ok(format!(
+                r#"<div hx-trigger="load" {redirect}> </div>"#,
+                redirect = frontend_redirect(&all, HXTarget::All)
+            )),
         }
     } else {
-        body_html.insert(&[("/library", HomepageTarget::Route)]);
+        body_html.route = "/library";
         body_html.render()
-    };
+    }?;
 
-    template!(
-        html,
-        templating,
-        "../frontend/content/index.html",
-        IndexTarget
-    );
-
-    Html(html.render_only_with(&[
-        (body, IndexTarget::Body),
-        (HXTarget::All.as_str().to_owned(), IndexTarget::All),
-    ]))
+    Ok(Index {
+        body,
+        all: HXTarget::All.as_str().to_owned(),
+    })
 }

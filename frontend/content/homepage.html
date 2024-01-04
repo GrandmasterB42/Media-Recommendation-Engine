@@ -2,18 +2,18 @@
 <div class="heading_box">
     <h4 class="main_title"> Media Recommendation Engine </h4>
     <div class="center_container">
-        <input checked id="radioLib" type="radio" name="section" {{RedirectLibrary}}>
+        <input checked id="radioLib" type="radio" name="section" {{redirect_library|safe}}>
         <label for="radioLib"> Library </label>
 
-        <input id="radioExp" type="radio" name="section" {{RedirectExplore}}>
+        <input id="radioExp" type="radio" name="section" {{redirect_explore|safe}}>
         <label for="radioExp"> Explore </label>
 
         <input id="radioSet" type="radio" name="section">
-        <label for="radioSet" {{RedirectSettings}}> Settings </label>
+        <label for="radioSet" {{redirect_settings|safe}}> Settings </label>
     </div>
     <div class="logout_container">
         <input id="logout" class="hidden" type="button" title="logout">
         <label id="logout-label" for="logout"> Logout </label>
     </div>
 </div>
-<div id="{{Content}}" hx-trigger="load" hx-get="{{Route}}"> </div>
+<div id={{content}} hx-trigger="load" hx-get={{route}}> </div>

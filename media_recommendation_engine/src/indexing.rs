@@ -9,9 +9,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 use tracing::{debug, info, warn};
 
 use crate::{
-    database::{
-        Database, DatabaseResult, QueryRowGetConnExt, QueryRowGetStmtExt, QueryRowIntoConnExt,
-    },
+    database::{Database, QueryRowGetConnExt, QueryRowGetStmtExt, QueryRowIntoConnExt},
+    state::AppResult,
     utils::{HandleErr, Ignore, ParseBetween, ParseUntil},
 };
 
@@ -24,7 +23,7 @@ pub async fn periodic_indexing(db: Database) -> ! {
     }
 }
 
-fn indexing(db: &Database) -> DatabaseResult<()> {
+fn indexing(db: &Database) -> AppResult<()> {
     let conn = db.get()?;
     let locations: Vec<String> = conn
         .prepare("SELECT path FROM storage_locations")?
@@ -58,7 +57,7 @@ fn indexing(db: &Database) -> DatabaseResult<()> {
                 insertion_stmt.query_row_get([path_to_db(file)])?,
             ))
         })
-        .collect::<DatabaseResult<Vec<_>>>()?;
+        .collect::<AppResult<Vec<_>>>()?;
 
     classify_new_files(&conn, files)?;
 
@@ -76,7 +75,7 @@ fn indexing(db: &Database) -> DatabaseResult<()> {
 
 // TODO: Consider theme, ...
 /// This tries to insert the file into the database as best as possible
-fn classify_new_files(db: &Connection, data_files: Vec<(PathBuf, u64)>) -> DatabaseResult<()> {
+fn classify_new_files(db: &Connection, data_files: Vec<(PathBuf, u64)>) -> AppResult<()> {
     let groups = data_files
         .into_iter()
         .map(|(path, id)| (file_type(&path), path, id))
@@ -96,14 +95,14 @@ fn classify_new_files(db: &Connection, data_files: Vec<(PathBuf, u64)>) -> Datab
             FileType::Audio => classify_audio(db, group),
             FileType::Unknown => handle_unknown(db, group),
         })
-        .collect::<DatabaseResult<Vec<_>>>()?;
+        .collect::<AppResult<Vec<_>>>()?;
     Ok(())
 }
 
 fn classify_video(
     db: &Connection,
     video_files: impl Iterator<Item = (FileType, PathBuf, u64)>,
-) -> DatabaseResult<()> {
+) -> AppResult<()> {
     for (_file_type, path, data_id) in video_files {
         let file_classification = infer_from_video_filename(&path);
         let path_classification = infer_from_video_path(&path);
@@ -281,7 +280,7 @@ struct EpisodeClassification<'a> {
 fn classify_audio(
     _db: &Connection,
     audio_files: impl Iterator<Item = (FileType, PathBuf, u64)>,
-) -> DatabaseResult<()> {
+) -> AppResult<()> {
     for (filetype, path, _data_id) in audio_files {
         if !os_str_conversion(path.file_name().unwrap()).contains("theme")
             && FileType::Audio == filetype
@@ -299,7 +298,7 @@ fn classify_audio(
 fn handle_unknown(
     _db: &Connection,
     unknown_files: impl Iterator<Item = (FileType, PathBuf, u64)>,
-) -> DatabaseResult<()> {
+) -> AppResult<()> {
     for (_, path, _) in unknown_files {
         warn!("Could not handle {path:?}");
     }
@@ -483,7 +482,7 @@ fn scan_dir(path: &Path) -> Vec<PathBuf> {
     })
 }
 
-fn resolve_part(db: &Connection, part: Option<u64>, data_id: u64) -> DatabaseResult<(u64, u64)> {
+fn resolve_part(db: &Connection, part: Option<u64>, data_id: u64) -> AppResult<(u64, u64)> {
     Ok(if let Some(part) = part {
         (
             db.query_row_get(

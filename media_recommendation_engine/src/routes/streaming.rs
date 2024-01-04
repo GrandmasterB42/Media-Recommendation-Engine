@@ -1,5 +1,6 @@
 use std::{collections::HashMap, sync::Arc, time::SystemTime};
 
+use askama::Template;
 use axum::{
     body::Body,
     extract::{
@@ -7,7 +8,7 @@ use axum::{
         Path, State, WebSocketUpgrade,
     },
     http::{Request, StatusCode},
-    response::{Html, IntoResponse, Redirect},
+    response::{IntoResponse, Redirect},
     routing::get,
     Router,
 };
@@ -17,7 +18,6 @@ use futures_util::{
     SinkExt, StreamExt,
 };
 
-use macros::template;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, Mutex};
 use tower::Service;
@@ -25,9 +25,8 @@ use tower_http::services::ServeFile;
 use tracing::debug;
 
 use crate::{
-    database::{Database, DatabaseResult, QueryRowGetConnExt},
-    state::AppState,
-    templating::TemplatingEngine,
+    database::{Database, QueryRowGetConnExt},
+    state::{AppResult, AppState},
     utils::HandleErr,
 };
 
@@ -96,7 +95,7 @@ async fn new_session(
     Path(id): Path<u64>,
     State(sessions): State<StreamingSessions>,
     State(db): State<Database>,
-) -> DatabaseResult<impl IntoResponse> {
+) -> AppResult<impl IntoResponse> {
     let random = pseudo_random();
 
     let conn = db.get()?;
@@ -123,23 +122,18 @@ async fn ws_session(
     ws: WebSocketUpgrade,
     Path(id): Path<u32>,
     State(sessions): State<StreamingSessions>,
-    State(templating): State<TemplatingEngine>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| ws_session_callback(socket, templating, id, sessions))
+    ws.on_upgrade(move |socket| ws_session_callback(socket, id, sessions))
 }
 
-async fn ws_session_callback(
-    socket: WebSocket,
-    templating: TemplatingEngine,
-    id: u32,
-    sessions: StreamingSessions,
-) {
-    template!(
-        notification,
-        templating,
-        "../frontend/content/notification.html",
-        NotificationTarget
-    );
+#[derive(Template)]
+#[template(path = "../frontend/content/notification.html")]
+struct Notification<'a> {
+    msg: &'a str,
+    script: &'a str,
+}
+
+async fn ws_session_callback(socket: WebSocket, id: u32, sessions: StreamingSessions) {
     let user_id = pseudo_random();
 
     let (mut sender, receiver) = socket.split();
@@ -149,13 +143,14 @@ async fn ws_session_callback(
         let session = sessions.get_mut(&id);
         if session.is_none() {
             sender
-                .send(Message::Text(notification.render_only_with(&[
-                    (
-                        "This session seems to be invalid... Falling back to previous page",
-                        NotificationTarget::Msg,
-                    ),
-                    ("/scripts/back.js", NotificationTarget::Script),
-                ])))
+                .send(Message::Text(
+                    Notification {
+                        msg: "This session seems to be invalid... Falling back to previous page",
+                        script: "/scripts/back.js",
+                    }
+                    .render()
+                    .unwrap(),
+                ))
                 .await
                 .log_err_with_msg("failed to notify client of invalid session");
             return;
@@ -260,15 +255,14 @@ async fn write(
     }
 }
 
-async fn session(
-    State(templating): State<TemplatingEngine>,
-    Path(id): Path<u64>,
-) -> impl IntoResponse {
-    template!(video, templating, "../frontend/content/video.html", Target);
-    Html(video.render_only_with(&[
-        (id.to_string(), Target::ContentID),
-        (id.to_string(), Target::SessionID),
-    ]))
+#[derive(Template)]
+#[template(path = "../frontend/content/video.html")]
+struct Video {
+    id: u64,
+}
+
+async fn session(Path(id): Path<u64>) -> impl IntoResponse {
+    Video { id }
 }
 
 fn pseudo_random() -> u32 {
