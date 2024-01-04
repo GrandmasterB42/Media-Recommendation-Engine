@@ -55,8 +55,8 @@ async fn get_library(
         .map(|(id, _session)| GridElement {
             title: format!("Session {id}"),
             redirect_entire: frontend_redirect(&format!("/video/session/{id}"), HXTarget::All),
-            redirect_img: "".to_string(),
-            redirect_title: "".to_string(),
+            redirect_img: String::new(),
+            redirect_title: String::new(),
         })
         .collect::<Vec<_>>();
 
@@ -71,8 +71,8 @@ async fn get_library(
                 &format!("/preview/Franchise/{id}"),
                 HXTarget::Content,
             ),
-            redirect_img: "".to_string(),
-            redirect_title: "".to_string(),
+            redirect_img: String::new(),
+            redirect_title: String::new(),
         })
         .collect::<Vec<_>>();
 
@@ -103,7 +103,7 @@ async fn preview(
     Path((prev, id)): Path<(Preview, u64)>,
 ) -> AppResult<impl IntoResponse> {
     Ok(PreviewTemplate {
-        top: top_preview(&db, id, &prev).await?,
+        top: top_preview(&db, id, &prev)?,
         categories: preview_categories(&db, id, &prev).await?,
     })
 }
@@ -115,9 +115,7 @@ struct LargeImage {
     image_interaction: String,
 }
 
-async fn top_preview(conn: &Database, id: u64, prev: &Preview) -> AppResult<LargeImage> {
-    let conn = &mut conn.get()?;
-
+fn top_preview(conn: &Database, id: u64, prev: &Preview) -> AppResult<LargeImage> {
     fn season_title(conn: Connection, season_id: u64) -> AppResult<String> {
         let (season_title, season, seriesid): (Option<String>, u64, u64) = conn.query_row_into(
             "SELECT title, season, seriesid FROM seasons WHERE id=?1",
@@ -131,6 +129,8 @@ async fn top_preview(conn: &Database, id: u64, prev: &Preview) -> AppResult<Larg
         });
         Ok(title)
     }
+
+    let conn = &mut conn.get()?;
 
     let (title, image_interaction): (String, String) = match prev {
         Preview::Franchise => (
@@ -188,9 +188,6 @@ async fn preview_categories(
     id: u64,
     prev: &Preview,
 ) -> AppResult<Vec<(&'static str, Vec<GridElement>)>> {
-    let conn = &mut db.get()?;
-    return inner(conn, id, prev);
-
     fn inner(
         conn: Connection,
         id: u64,
@@ -220,7 +217,7 @@ async fn preview_categories(
                                 let video_id = resolve_video(conn, video_id, reference_flag)?;
                                 Ok(GridElement {
                                     title,
-                                    redirect_entire: "".to_string(),
+                                    redirect_entire: String::new(),
                                     redirect_img: frontend_redirect(
                                         &format!("/video/{video_id}"),
                                         HXTarget::All,
@@ -249,8 +246,8 @@ async fn preview_categories(
                                     &format!("/preview/Series/{series_id}"),
                                     HXTarget::Content,
                                 ),
-                                redirect_img: "".to_string(),
-                                redirect_title: "".to_string(),
+                                redirect_img: String::new(),
+                                redirect_title: String::new(),
                             })
                             .collect::<Vec<GridElement>>();
                         vec![("<h1> Series </h1>", items)]
@@ -284,8 +281,8 @@ async fn preview_categories(
                                     &format!("/preview/Season/{season_id}"),
                                     HXTarget::Content,
                                 ),
-                                redirect_img: "".to_string(),
-                                redirect_title: "".to_string(),
+                                redirect_img: String::new(),
+                                redirect_title: String::new(),
                             }
                         }
                     ).collect::<Vec<GridElement>>();
@@ -302,7 +299,7 @@ async fn preview_categories(
                     let name = name.unwrap_or(format!("Episode {episode}"));
                     GridElement {
                         title: name,
-                        redirect_entire: "".to_string(),
+                        redirect_entire: String::new(),
                         redirect_img: frontend_redirect(
                             &format!("/video/{videoid}"),
                             HXTarget::All,
@@ -319,6 +316,9 @@ async fn preview_categories(
             Preview::Episode | Preview::Movie => Ok(Vec::new()),
         }
     }
+
+    let conn = &mut db.get()?;
+    inner(conn, id, prev)
 }
 
 fn resolve_video(conn: Connection, video_id: u64, reference_flag: u64) -> AppResult<u64> {
