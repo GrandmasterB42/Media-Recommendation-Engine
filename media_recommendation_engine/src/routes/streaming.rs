@@ -61,7 +61,7 @@ pub struct Session {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum WSMessage {
     State(SessionState),
-    Join,
+    Join(bool), // bool is included to generate actual json, not just "Join"
     Pause(f32),
     Play(f32),
     Seek(f32),
@@ -220,7 +220,7 @@ async fn read(
                             }
                         }
                         WSMessage::Seek(_) => (),
-                        WSMessage::Join => {
+                        WSMessage::Join(_) => {
                             let state = sessions.lock().await[&id].state;
                             session_sender
                                 .send(WSMessage::State(state))

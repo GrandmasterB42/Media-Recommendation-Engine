@@ -1,9 +1,7 @@
 var ws;
-var isUserSeek = true;
+var isUserEvent = true;
 var justJoined = true;
 
-// NOTE: Using the HTMX Websocket is probably not the easiest thing right now, but I hope it will help with the rest of the UI
-// TODO: the websocket seems to be undefined sometimes
 document.body.addEventListener("htmx:wsOpen", function (event) {
     ws = event.detail.socketWrapper;
 });
@@ -23,26 +21,32 @@ document.body.addEventListener("htmx:wsBeforeMessage", function (event) {
 var video = document.getElementById("currentvideo");
 
 video.addEventListener("play", function () {
-    sendVideoState("Play", this.currentTime);
+    if (isUserEvent) {
+        sendVideoState("Play", this.currentTime);
+    }
+    isUserEvent = false;
 })
 
 video.addEventListener("pause", function () {
-    sendVideoState("Pause", this.currentTime);
+    if (isUserEvent) {
+        sendVideoState("Pause", this.currentTime);
+    }
+    isUserEvent = false
 })
 
 video.addEventListener("seeked", function () {
     if (!justJoined) {
-        if (isUserSeek) {
+        if (isUserEvent) {
             sendVideoState("Seek", this.currentTime)
         }
-        isUserSeek = true;
+        isUserEvent = true;
     }
 })
 
 function sendVideoState(state, time) {
     if (justJoined) {
         var message = {};
-        message["Join"] = null;
+        message["Join"] = true;
         ws.send(JSON.stringify(message));
         return;
     }
@@ -53,15 +57,15 @@ function sendVideoState(state, time) {
 }
 
 function handleServerEvent(data) {
-    if (data === "Join") {
+    if (data.Join) {
         if (justJoined) {
             justJoined = false;
             return;
         }
-        isUserSeek = false;
+        isUserEvent = false;
         sendVideoState("Seek", video.currentTime)
     } else if (data.Play) {
-        isUserSeek = false;
+        isUserEvent = false;
         video.currentTime = data.Play;
         try {
             video.play()
@@ -69,11 +73,11 @@ function handleServerEvent(data) {
             // I know this will fail before first interaction
         }
     } else if (data.Pause) {
-        isUserSeek = false;
+        isUserEvent = false;
         video.currentTime = data.Pause
         video.pause()
     } else if (data.Seek) {
-        isUserSeek = false;
+        isUserEvent = false;
         video.currentTime = data.Seek
     } else if (data.State) {
         if (data.State === "Playing") {
