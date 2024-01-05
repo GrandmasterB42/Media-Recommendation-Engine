@@ -4,8 +4,9 @@ Media Recommendation Engine(name is subject to change) aims to be a self-hosted 
 
 ## Current capabilities
 
-- Detect video files in a plex-like directory structure, organize them in a database and
+- Detect video files in a plex-like directory structure, organize them in a database
 - Show the discovered content in a web interface
+- Shared media playback sessions
 
 ## Short term goals
 
