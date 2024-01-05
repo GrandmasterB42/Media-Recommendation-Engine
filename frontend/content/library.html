@@ -1,6 +1,6 @@
 <div>
     <link href="/styles/library.css" rel="stylesheet" />
-    <div class="session_heading">
+    <div class="session_heading" hx-get="/sessions" hx-trigger="every 1s">
         {% for session in sessions %}
         {{session|safe}}
         {% endfor %}

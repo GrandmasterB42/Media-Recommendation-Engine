@@ -22,6 +22,7 @@ use super::StreamingSessions;
 pub fn library() -> Router<AppState> {
     Router::new()
         .route("/library", get(get_library))
+        .route("/sessions", get(get_sessions))
         .route("/preview/:preview/:id", get(preview))
 }
 
@@ -47,18 +48,7 @@ async fn get_library(
 ) -> AppResult<impl IntoResponse> {
     let conn = db.get()?;
 
-    let sessions = sessions
-        .sessions
-        .lock()
-        .await
-        .iter()
-        .map(|(id, _session)| GridElement {
-            title: format!("Session {id}"),
-            redirect_entire: frontend_redirect(&format!("/video/session/{id}"), HXTarget::All),
-            redirect_img: String::new(),
-            redirect_title: String::new(),
-        })
-        .collect::<Vec<_>>();
+    let sessions = render_sessions(sessions).await;
 
     let franchises = conn
         .prepare("SELECT id, title FROM franchise")?
@@ -80,6 +70,30 @@ async fn get_library(
         sessions,
         franchises,
     })
+}
+
+async fn get_sessions(State(sessions): State<StreamingSessions>) -> AppResult<impl IntoResponse> {
+    render_sessions(sessions)
+        .await
+        .iter()
+        .map(|el| el.render())
+        .collect::<Result<String, _>>()
+        .map_err(Into::into)
+}
+
+async fn render_sessions(sessions: StreamingSessions) -> Vec<GridElement> {
+    sessions
+        .sessions
+        .lock()
+        .await
+        .iter()
+        .map(|(id, _session)| GridElement {
+            title: format!("Session {id}"),
+            redirect_entire: frontend_redirect(&format!("/video/session/{id}"), HXTarget::All),
+            redirect_img: String::new(),
+            redirect_title: String::new(),
+        })
+        .collect::<Vec<_>>()
 }
 
 #[derive(Debug, Deserialize)]
