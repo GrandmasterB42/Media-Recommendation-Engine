@@ -221,18 +221,6 @@ async fn ws_session_callback(socket: WebSocket, id: u32, sessions: StreamingSess
         _ = (&mut recv_task) => {send_task.abort()}
     }
 
-    leave_sender
-        .send((
-            Notification {
-                msg: format!("{user_id} left the session"),
-                script: String::new(),
-                origin_: user_id,
-                time_: 0.,
-            },
-            NotificationType::Leave,
-        ))
-        .await
-        .log_err_with_msg("failed to send notification");
     {
         let mut sessions = sessions.lock().await;
         let session = sessions.get_mut(&id).unwrap();
@@ -240,6 +228,19 @@ async fn ws_session_callback(socket: WebSocket, id: u32, sessions: StreamingSess
 
         if session.receivers.is_empty() {
             sessions.remove(&id);
+        } else {
+            leave_sender
+                .send((
+                    Notification {
+                        msg: format!("{user_id} left the session"),
+                        script: String::new(),
+                        origin_: user_id,
+                        time_: 0.,
+                    },
+                    NotificationType::Leave,
+                ))
+                .await
+                .log_err_with_msg("failed to send notification");
         }
     }
 }
@@ -436,8 +437,12 @@ async fn send_notification(
     // Send messages with regard to state, but not any previous messages
     let (msg, typ, pos) = match msg {
         WSMessage::Seek(pos) => {
-            let msg = seek_text(client_id, *pos);
-            (msg, NotificationType::Skip, pos)
+            if *pos != 0. {
+                let msg = seek_text(client_id, *pos);
+                (msg, NotificationType::Skip, pos)
+            } else {
+                return;
+            }
         }
         WSMessage::Join(_) => {
             let msg = format!("{client_id} joined the session");
