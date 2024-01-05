@@ -1,4 +1,6 @@
-<div id="notification">
-    {{msg}}
-    <script src="{{script}}"></script>
+<div id="notification" hx-swap-oob="beforeend">
+    <div hx-on::load="setTimeout(function() {event.detail.elt.remove()}, 1000)">
+        {{msg}}
+        <script src={{script}}> </script>
+    </div>
 </div>

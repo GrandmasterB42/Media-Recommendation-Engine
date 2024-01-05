@@ -83,7 +83,6 @@ async fn get_sessions(State(sessions): State<StreamingSessions>) -> AppResult<im
 
 async fn render_sessions(sessions: StreamingSessions) -> Vec<GridElement> {
     sessions
-        .sessions
         .lock()
         .await
         .iter()
