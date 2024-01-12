@@ -1,5 +1,5 @@
-<div id="notification" hx-swap-oob="beforeend">
-    <div hx-on::load="setTimeout(function() {event.detail.elt.remove()}, 1000)">
+<div id="notifications" hx-swap-oob="beforeend">
+    <div class="notification" hx-on::load="setTimeout(function() {event.detail.elt.remove()}, 2500)">
         {{msg}}
         <script src={{script}}> </script>
     </div>

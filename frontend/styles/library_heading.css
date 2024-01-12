@@ -9,6 +9,8 @@
 }
 
 .heading_box {
+    justify-content: center;
+    align-content: center;
     text-align: center;
     display: flex;
 }

@@ -1,0 +1,217 @@
+body {
+    margin: 0;
+}
+
+.video-container {
+    position: relative;
+    width: 97.5%;
+    display: flex;
+    justify-content: center;
+    margin-inline: auto;
+    background-color: black;
+    transition: cursor 150ms ease-in-out;
+}
+
+.video-container.theater {
+    width: 100%;
+    max-height: 90vh;
+}
+
+.video-container.theater .tall-icon {
+    display: none;
+}
+
+.video-container:not(.theater) .wide-icon {
+    display: none;
+}
+
+.video-container.full-screen {
+    width: 100%;
+    max-height: 100vh;
+}
+
+.video-container.full-screen .open-icon {
+    display: none;
+}
+
+.video-container:not(.full-screen) .close-icon {
+    display: none;
+}
+
+.video-container.hiddencursor:not(.paused) {
+    cursor: none;
+}
+
+video {
+    width: 100%;
+    height: auto;
+}
+
+.video-controls {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 1000;
+    opacity: 0;
+    transition: opacity 500ms ease-in-out;
+}
+
+.video-controls::before {
+    content: "";
+    position: absolute;
+    bottom: 0;
+    background: linear-gradient(to top, rgba(0, 0, 0, .75), transparent);
+    width: 100%;
+    aspect-ratio: 6/1;
+    z-index: -1;
+    pointer-events: none;
+}
+
+.video-container.hovering .video-controls,
+.video-container:focus-within .video-controls,
+.video-container.paused .video-controls {
+    opacity: 1;
+    transition: opacity 150ms ease-in-out;
+}
+
+.video-controls .controls {
+    display: flex;
+    gap: .5rem;
+    padding: .25rem;
+}
+
+.video-controls .controls button {
+    background: none;
+    border: none;
+    color: inherit;
+    padding: 0;
+    height: 30px;
+    width: 30px;
+    font-size: 1.1rem;
+    cursor: pointer;
+    opacity: 0.75;
+    transition: opacity 150ms ease-in-out;
+}
+
+.video-controls .controls button:hover {
+    opacity: 1;
+}
+
+.video-container.paused .pause-icon {
+    display: none;
+}
+
+.video-container:not(.paused) .play-icon {
+    display: none;
+}
+
+.volume-high-icon,
+.volume-low-icon,
+.volume-muted-icon {
+    display: none;
+}
+
+.video-container[data-volume-level="high"] .volume-high-icon {
+    display: block;
+}
+
+.video-container[data-volume-level="low"] .volume-low-icon {
+    display: block;
+}
+
+.video-container[data-volume-level="muted"] .volume-muted-icon {
+    display: block;
+}
+
+.volume {
+    display: flex;
+    align-items: center;
+}
+
+.volume-slider {
+    width: 0;
+    transform-origin: left;
+    transform: scaleX(0);
+    transition: width 150ms ease-in-out, transform 150ms ease-in-out;
+}
+
+.volume:hover .volume-slider,
+.volume-slider:focus-within {
+    width: 100px;
+    transform: scaleX(1);
+}
+
+.duration {
+    display: flex;
+    align-items: center;
+    gap: .25rem;
+    flex-grow: 1;
+}
+
+.video-controls .controls button.wide {
+    width: 50px;
+}
+
+.timeline-container {
+    height: 7px;
+    margin-inline: .5rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    transition: height 100ms ease-in-out;
+}
+
+.timeline {
+    border-radius: 1px;
+    background-color: rgba(100, 100, 100, .5);
+    height: 3px;
+    width: 100%;
+    position: relative;
+}
+
+.timeline::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    right: calc(100% - var(--preview-position) * 100%);
+    background-color: rgb(150, 150, 150);
+    display: none;
+}
+
+.timeline::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    right: calc(100% - var(--progress-position) * 100%);
+    background-color: red;
+}
+
+.timeline .indicator {
+    position: absolute;
+    transform: translateX(-50%);
+    scale: var(--scale);
+    height: 200%;
+    top: -50%;
+    left: calc(var(--progress-position) * 100%);
+    background-color: red;
+    border-radius: 50%;
+    transition: transform 150ms ease-in-out;
+    aspect-ratio: 1/1;
+}
+
+.timeline-container:hover .timeline::before {
+    display: block;
+}
+
+.timeline-container:hover .thumb-indicator {
+    --scale: 1;
+}
+
+.timeline-container:hover .timeline {
+    height: 100%;
+}

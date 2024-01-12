@@ -4,11 +4,6 @@ body {
     color: #f2f2f2;
 }
 
-div {
-    align-items: center;
-    justify-content: center;
-}
-
 label {
     font-size: 18px;
     cursor: pointer;
