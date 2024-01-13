@@ -1,6 +1,6 @@
-var ws;
-var isUserEvent = true;
-var justJoined = true;
+let ws;
+let isUserEvent = true;
+let justJoined = true;
 
 const video = document.getElementById("currentvideo");
 const videocontainer = document.querySelector(".video-container");
@@ -11,13 +11,10 @@ document.body.addEventListener("htmx:wsOpen", function (event) {
 
 document.body.addEventListener("htmx:wsBeforeMessage", function (event) {
     try {
-        if (ws == undefined) {
-            ws = event.detail.socketWrapper;
-        }
         var data = JSON.parse(event.detail.message);
         handleServerEvent(data)
     } catch (e) {
-        // Errors can mostly be ignored as they wouldn't be fatal in any way
+        // This fails if html is sent, so it doesnt really matter
     }
 });
 

@@ -1,5 +1,10 @@
-<div class="video-container theater paused" hx-ext="ws" ws-connect="/video/session/ws/{{id}}" data-volume-level="high">
-    <video id="currentvideo" src=/video/content/{{id}} hx-history="false" autoplay hx-on:click="togglePlay()">
+<div class="video-container theater paused" hx-ext="ws" ws-connect="/video/session/ws/{{id}}" data-volume-level="high"
+    hx-history="false">
+    <script src="/scripts/video.js"></script>
+    <link rel="stylesheet" href="/styles/video.css" />
+    <link rel="stylesheet" href="/styles/notifications.css" />
+
+    <video id="currentvideo" src=/video/content/{{id}} autoplay hx-on:click="togglePlay()">
     </video>
     <div class="video-controls theater">
         <div class="timeline-container" hx-on:mousemove="handleTimelineUpdate(event)"
@@ -39,7 +44,3 @@
     </div>
     <div id="notifications"> </div>
 </div>
-
-<script src="/scripts/video.js"></script>
-<link rel="stylesheet" href="/styles/video.css" />
-<link rel="stylesheet" href="/styles/notifications.css" />
