@@ -1,6 +1,4 @@
 // TODO: Make things that are just plain eventlisteners that call a function hx-on:clicK="function" instead
-// TODO: Remove normal video mode and make theater default
-// TODO: hiding controls in fullscreen mode and some other scenarios
 var ws;
 var isUserEvent = true;
 var justJoined = true;
@@ -13,9 +11,8 @@ const volumeslider = document.querySelector(".volume-slider");
 const currenttime = document.querySelector(".current-time");
 const totaltime = document.querySelector(".total-time");
 const playbackspeed = document.querySelector(".speed");
-const theaterbutton = document.querySelector(".theater-player");
 const fullscreenbutton = document.querySelector(".fullscreen-player");
-const miniplayerbutton = document.querySelector(".mini-player");
+const pipbutton = document.querySelector(".pip");
 const timelinecontainer = document.querySelector(".timeline-container");
 
 document.body.addEventListener("htmx:wsOpen", function (event) {
@@ -179,14 +176,9 @@ video.addEventListener("volumechange", () => {
 
 // Modes
 
-theaterbutton.addEventListener("click", toggleTheaterMode);
 fullscreenbutton.addEventListener("click", toggleFullscreenMode);
-miniplayerbutton.addEventListener("click", toggleMiniplayerMode);
+pipbutton.addEventListener("click", togglePiPMode);
 
-
-function toggleTheaterMode() {
-    videocontainer.classList.toggle("theater");
-}
 
 function toggleFullscreenMode() {
     if (document.fullscreenElement == null) {
@@ -200,8 +192,8 @@ document.addEventListener("fullscreenchange", function () {
     videocontainer.classList.toggle("full-screen", document.fullscreenElement);
 })
 
-function toggleMiniplayerMode() {
-    if (videocontainer.classList.contains("miniplayer")) {
+function togglePiPMode() {
+    if (videocontainer.classList.contains("pip")) {
         document.exitPictureInPicture();
     } else {
         try {
@@ -213,11 +205,11 @@ function toggleMiniplayerMode() {
 }
 
 video.addEventListener("enterpictureinpicture", function () {
-    if (!videocontainer.classList.contains("miniplayer")) { videocontainer.classList.add("miniplayer"); }
+    if (!videocontainer.classList.contains("pip")) { videocontainer.classList.add("pip"); }
 })
 
 video.addEventListener("leavepictureinpicture", function () {
-    videocontainer.classList.remove("miniplayer");
+    videocontainer.classList.remove("pip");
 })
 
 // Play / Pause

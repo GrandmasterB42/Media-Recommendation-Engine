@@ -30,11 +30,19 @@ body {
     max-height: 100vh;
 }
 
-.video-container.full-screen .open-icon {
+.video-container.full-screen .fullscreen-close {
     display: none;
 }
 
-.video-container:not(.full-screen) .close-icon {
+.video-container:not(.full-screen) .fullscreen-open {
+    display: none;
+}
+
+.video-container.pip .pip-start {
+    display: none;
+}
+
+.video-container:not(.pip) .pip-exit {
     display: none;
 }
 
@@ -96,6 +104,14 @@ video {
 
 .video-controls .controls button:hover {
     opacity: 1;
+}
+
+.video-container .playpause,
+.video-container .volume,
+.video-container .pip,
+.video-container .fullscreen-player {
+    display: flex;
+    align-items: center;
 }
 
 .video-container.paused .pause-icon {

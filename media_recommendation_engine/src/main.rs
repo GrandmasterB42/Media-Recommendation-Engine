@@ -107,7 +107,15 @@ fn dynamic_content() -> Router<AppState> {
         ))
         .service(ServeDir::new("frontend/scripts"));
 
+    let icons = ServiceBuilder::new()
+        .layer(SetResponseHeaderLayer::overriding(
+            HeaderName::from_static("content-type"),
+            HeaderValue::from_static("image/svg+xml; charset=UTF-8"),
+        ))
+        .service(ServeDir::new("frontend/icons"));
+
     Router::new()
         .nest_service("/styles", styles)
         .nest_service("/scripts", scripts)
+        .nest_service("/icons", icons)
 }
