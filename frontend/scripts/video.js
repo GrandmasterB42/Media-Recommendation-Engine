@@ -1,19 +1,9 @@
-// TODO: Make things that are just plain eventlisteners that call a function hx-on:clicK="function" instead
 var ws;
 var isUserEvent = true;
 var justJoined = true;
 
 const video = document.getElementById("currentvideo");
 const videocontainer = document.querySelector(".video-container");
-const playpausebutton = document.querySelector(".playpause");
-const mute = document.querySelector(".mute");
-const volumeslider = document.querySelector(".volume-slider");
-const currenttime = document.querySelector(".current-time");
-const totaltime = document.querySelector(".total-time");
-const playbackspeed = document.querySelector(".speed");
-const fullscreenbutton = document.querySelector(".fullscreen-player");
-const pipbutton = document.querySelector(".pip");
-const timelinecontainer = document.querySelector(".timeline-container");
 
 document.body.addEventListener("htmx:wsOpen", function (event) {
     ws = event.detail.socketWrapper;
@@ -42,6 +32,7 @@ videocontainer.addEventListener("mousemove", () => {
         timeoutId = undefined;
         return;
     }
+
     if (videocontainer.classList.contains("hovering")) {
         videocontainer.classList.remove("hiddencursor");
         clearTimeout(timeoutId);
@@ -61,8 +52,10 @@ videocontainer.addEventListener("mouseleave", () => {
 });
 
 // Timeline
-timelinecontainer.addEventListener("mousemove", handleTimelineUpdate);
-timelinecontainer.addEventListener("mousedown", toggleScrubbing);
+const timelinecontainer = document.querySelector(".timeline-container");
+const currenttime = document.querySelector(".current-time");
+const totaltime = document.querySelector(".total-time");
+
 document.addEventListener("mouseup", e => {
     if (isScrubbing) {
         toggleScrubbing(e);
@@ -106,9 +99,9 @@ function handleTimelineUpdate(e) {
 }
 
 // Playback speed
-playbackspeed.addEventListener("click", changeplaybackspeed);
+const playbackspeed = document.querySelector(".speed");
 
-function changeplaybackspeed() {
+function changePlaybackSpeed() {
     let newPlayRate = video.playbackRate + 0.25;
     if (newPlayRate > 2) {
         newPlayRate = 0.25;
@@ -148,7 +141,7 @@ function skip(seconds) {
 }
 
 // Volume
-mute.addEventListener("click", toggleMute);
+const volumeslider = document.querySelector(".volume-slider");
 volumeslider.addEventListener("input", e => {
     video.volume = e.target.value;
     video.muted = e.target.value === 0;
@@ -175,11 +168,6 @@ video.addEventListener("volumechange", () => {
 });
 
 // Modes
-
-fullscreenbutton.addEventListener("click", toggleFullscreenMode);
-pipbutton.addEventListener("click", togglePiPMode);
-
-
 function toggleFullscreenMode() {
     if (document.fullscreenElement == null) {
         videocontainer.requestFullscreen();
@@ -213,14 +201,14 @@ video.addEventListener("leavepictureinpicture", function () {
 })
 
 // Play / Pause
-function toggleplay() {
+function togglePlay() {
     video.paused ? video.play() : video.pause();
 }
 
 document.addEventListener("keydown", e => {
     switch (e.key.toLocaleLowerCase()) {
         case " ":
-            toggleplay();
+            togglePlay();
             break;
         case "m":
             toggleMute();
@@ -234,30 +222,27 @@ document.addEventListener("keydown", e => {
     }
 })
 
-playpausebutton.addEventListener("click", toggleplay);
-video.addEventListener("click", toggleplay);
-
-video.addEventListener("play", function () {
+video.addEventListener("play", () => {
     videocontainer.classList.remove("paused");
     if (isUserEvent) {
-        sendVideoState("Play", this.currentTime);
+        sendVideoState("Play", video.currentTime);
     }
     isUserEvent = false;
 })
 
-video.addEventListener("pause", function () {
+video.addEventListener("pause", () => {
     videocontainer.classList.add("paused");
     if (isUserEvent) {
-        sendVideoState("Pause", this.currentTime);
+        sendVideoState("Pause", video.currentTime);
     }
     isUserEvent = false
 })
 // ---
 
-video.addEventListener("seeked", function () {
+video.addEventListener("seeked", () => {
     if (!justJoined) {
         if (isUserEvent) {
-            sendVideoState("Seek", this.currentTime)
+            sendVideoState("Seek", video.currentTime)
         }
         isUserEvent = true;
     }

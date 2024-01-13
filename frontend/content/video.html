@@ -1,19 +1,20 @@
 <div class="video-container theater paused" hx-ext="ws" ws-connect="/video/session/ws/{{id}}" data-volume-level="high">
-    <video id="currentvideo" src=/video/content/{{id}} hx-history="false" autoplay>
+    <video id="currentvideo" src=/video/content/{{id}} hx-history="false" autoplay hx-on:click="togglePlay()">
     </video>
     <div class="video-controls theater">
-        <div class="timeline-container">
+        <div class="timeline-container" hx-on:mousemove="handleTimelineUpdate(event)"
+            hx-on:mousedown="toggleScrubbing(event)">
             <div class="timeline">
                 <div class="indicator"> </div>
             </div>
         </div>
         <div class="controls">
-            <button class="playpause">
+            <button class="playpause" hx-on:click="togglePlay()">
                 <img class="play-icon" src="/icons/play.svg" />
                 <img class="pause-icon" src="/icons/pause.svg" />
             </button>
             <div class="volume">
-                <button class="mute">
+                <button class="mute" hx-on:click="toggleMute()">
                     <img class="volume-high-icon" src="/icons/volume_high.svg">
                     <img class="volume-low-icon" src="/icons/volume_low.svg">
                     <img class="volume-muted-icon" src="/icons/volume_muted.svg">
@@ -25,12 +26,12 @@
                 /
                 <div class="total-time"></div>
             </div>
-            <button class="speed wide"> 1x </button>
-            <button class="pip">
+            <button class="speed wide" hx-on:click="changePlaybackSpeed()"> 1x </button>
+            <button class="pip" hx-on:click="togglePiPMode()">
                 <img class="pip-start" src="/icons/pip.svg" />
                 <img class="pip-exit" src="/icons/pip_exit.svg">
             </button>
-            <button class="fullscreen-player">
+            <button class="fullscreen-player" hx-on:click="toggleFullscreenMode()">
                 <img class="fullscreen-open" src="/icons/fullscreen.svg" />
                 <img class="fullscreen-close" src="/icons/fullscreen_exit.svg" />
             </button>
