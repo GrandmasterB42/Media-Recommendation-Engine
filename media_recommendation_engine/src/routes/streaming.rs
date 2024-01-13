@@ -288,7 +288,7 @@ async fn handle_client_message(
     sessions: &StreamingSessions,
 ) -> Result<(), ()> {
     let Ok(msg) = serde_json::from_str(&text) else {
-        debug!("Recieved malformed json from session websocket");
+        debug!("Recieved malformed json from session websocket: {text}");
         return Err(());
     };
 
