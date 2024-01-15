@@ -2,7 +2,13 @@ let ws;
 let isUserEvent = true;
 let justJoined = true;
 
+// Workaround for https://github.com/bigskysoftware/htmx/issues/2183 / https://github.com/bigskysoftware/htmx/issues/764 to fix picture-in-picture
+let temp_video = document.getElementById("currentvideo");
+temp_video.replaceWith(temp_video.cloneNode(true));
+// ---
+
 const video = document.getElementById("currentvideo");
+
 const videocontainer = document.querySelector(".video-container");
 
 document.body.addEventListener("htmx:wsOpen", function (event) {
