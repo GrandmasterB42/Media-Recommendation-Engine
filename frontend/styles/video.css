@@ -208,9 +208,9 @@ video {
 }
 
 .timeline .indicator {
+    --scale: 0;
     position: absolute;
-    transform: translateX(-50%);
-    scale: var(--scale);
+    transform: translateX(-50%) scale(var(--scale));
     height: 200%;
     top: -50%;
     left: calc(var(--progress-position) * 100%);
@@ -224,7 +224,7 @@ video {
     display: block;
 }
 
-.timeline-container:hover .thumb-indicator {
+.timeline-container:hover .indicator {
     --scale: 1;
 }
 
