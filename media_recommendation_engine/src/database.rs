@@ -72,56 +72,9 @@ fn db_init(conn: Connection) -> rusqlite::Result<()> {
         -> Different hash but location the same -> just recompute stuff related to the file without changing/removing references to it
         -> last modified changed -> could be the trigger for recomputing the hash depending on how expensive that is, does this have any other meaning?
     */
-    // NOTE: I know this isn't the best way to do this, but I'm lazy and it's easy to extend right now
-    const INIT_REQUESTS: &[&str] = &[
-        "CREATE TABLE storage_locations (path)",
-        "INSERT INTO storage_locations VALUES ('Y:')",
-        "CREATE TABLE data_files (
-            id INTEGER PRIMARY KEY,
-            path TEXT NOT NULL
-        )",
-        "CREATE TABLE multipart (
-            id INTEGER NOT NULL,
-            videoid INTEGER REFERENCES data_files (id),
-            part INTEGER NOT NULL
-        )",
-        "CREATE TABLE franchise (
-            id INTEGER PRIMARY KEY,
-            title TEXT NOT NULL
-        )",
-        "CREATE TABLE movies (
-            id INTEGER PRIMARY KEY,
-            franchiseid INTEGER REFERENCES franchise (id),
-            videoid INTEGER,
-            referenceflag INTEGER NOT NULL,
-            title TEXT NOT NULL
-        )",
-        "CREATE TABLE series (
-            id INTEGER PRIMARY KEY,
-            franchiseid INTEGER REFERENCES franchise (id),
-            title TEXT NULL
-        )",
-        "CREATE TABLE seasons (
-            id INTEGER PRIMARY KEY,
-            seriesid INTEGER REFERENCES series (id),
-            season INTEGER NULL,
-            title TEXT NULL
-        )",
-        "CREATE TABLE episodes (
-            id INTEGER PRIMARY KEY,
-            seasonid INTEGER REFERENCES seasons (id),
-            videoid INTEGER,
-            referenceflag INTEGER NOT NULL,
-            episode INTEGER NOT NULL,
-            title TEXT NULL
-        )",
-    ];
 
-    let tx = conn.transaction()?;
-    for request in INIT_REQUESTS {
-        tx.execute(request, [])?;
-    }
-    tx.commit()?;
+    const INIT_REQUEST: &str = include_str!("../../database/sql/init.sql");
+    conn.execute_batch(INIT_REQUEST)?;
 
     Ok(())
 }
