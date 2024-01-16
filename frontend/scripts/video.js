@@ -10,7 +10,7 @@ document.body.addEventListener("htmx:wsBeforeMessage", (event) => {
     try {
         let data = JSON.parse(event.detail.message);
         event.preventDefault();
-        handleServerEvent(data)
+        handleServerEvent(data);
     } catch (e) {
         // Html gets passed on to htmx
     }
@@ -35,18 +35,15 @@ function sendVideoState(state, time) {
 
 function handleServerEvent(data) {
     if (data.Join) {
-        sendVideoState("Seek", video.currentTime)
-        sendVideoState(video.paused ? "Pause" : "Play", video.currentTime)
-    } else if (data.Play) {
+        // TODO: This needs to be changed in some way
+        sendVideoState("Seek", video.currentTime);
+        sendVideoState(video.paused ? "Pause" : "Play", video.currentTime);
+    } else if (data.Play && active) {
         video.currentTime = data.Play;
-        try {
-            video.play()
-        } catch (e) {
-            // I know this will fail before first interaction
-        }
+        video.play();
     } else if (data.Pause) {
-        video.currentTime = data.Pause
-        video.pause()
+        video.currentTime = data.Pause;
+        video.pause();
     } else if (data.Seek) {
         video.currentTime = data.Seek
     } else if (data.State && active) {
