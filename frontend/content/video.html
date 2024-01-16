@@ -1,5 +1,5 @@
 <script>
-    document.body.addEventListener("htmx:wsOpen", function (event) {
+    document.body.addEventListener("htmx:wsOpen", (event) => {
         ws = event.detail.socketWrapper;
     });
 </script>
@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="/styles/video.css" />
     <link rel="stylesheet" href="/styles/notifications.css" />
 
-    <video id="currentvideo" src=/video/content/{{id}} autoplay hx-on:click="togglePlay()">
+    <video id="currentvideo" src=/video/content/{{id}} hx-on:click="togglePlay()">
     </video>
     <div class="video-controls theater">
         <div class="timeline-container" hx-on:mousemove="handleTimelineUpdate(event)"

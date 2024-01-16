@@ -1,18 +1,12 @@
-let ws;
-let isUserEvent = true;
-let justJoined = true;
-
 // Workaround for https://github.com/bigskysoftware/htmx/issues/2183 / https://github.com/bigskysoftware/htmx/issues/764 to fix picture-in-picture
 let temp_video = document.getElementById("currentvideo");
 temp_video.replaceWith(temp_video.cloneNode(true));
 // ---
 
 const video = document.getElementById("currentvideo");
-
 const videocontainer = document.querySelector(".video-container");
 
-// Server interaction
-document.body.addEventListener("htmx:wsBeforeMessage", function (event) {
+document.body.addEventListener("htmx:wsBeforeMessage", (event) => {
     try {
         let data = JSON.parse(event.detail.message);
         event.preventDefault();
@@ -22,29 +16,28 @@ document.body.addEventListener("htmx:wsBeforeMessage", function (event) {
     }
 });
 
-function sendVideoState(state, time) {
-    if (justJoined) {
-        var message = {};
-        message["Join"] = true;
-        ws.send(JSON.stringify(message));
-        return;
+let active = false;
+async function wait_for_interact() {
+    while (!navigator.userActivation.isActive) {
+        await new Promise(r => setTimeout(r, 100));
     }
-    var message = {};
+    active = true;
+    let message = { "Join": true };
+    ws.send(JSON.stringify(message));
+}
+setTimeout(wait_for_interact, 100); // Give the websocket a chance to connect
+
+function sendVideoState(state, time) {
+    let message = {};
     message[state] = time !== undefined ? time : null;
-    var message = JSON.stringify(message);
-    ws.send(message);
+    ws.send(JSON.stringify(message));
 }
 
 function handleServerEvent(data) {
     if (data.Join) {
-        if (justJoined) {
-            justJoined = false;
-            return;
-        }
-        isUserEvent = false;
         sendVideoState("Seek", video.currentTime)
+        sendVideoState(video.paused ? "Pause" : "Play", video.currentTime)
     } else if (data.Play) {
-        isUserEvent = false;
         video.currentTime = data.Play;
         try {
             video.play()
@@ -52,19 +45,13 @@ function handleServerEvent(data) {
             // I know this will fail before first interaction
         }
     } else if (data.Pause) {
-        isUserEvent = false;
         video.currentTime = data.Pause
         video.pause()
     } else if (data.Seek) {
-        isUserEvent = false;
         video.currentTime = data.Seek
-    } else if (data.State) {
+    } else if (data.State && active) {
         if (data.State === "Playing") {
-            try {
-                video.play();
-            } catch (e) {
-                // I know this will fail before first interaction
-            }
+            video.play();
         } else if (data.State === "Paused") {
             video.pause();
         }
@@ -129,6 +116,7 @@ function toggleScrubbing(e) {
         video.pause();
     } else {
         video.currentTime = video.duration * percent;
+        sendVideoState("Seek", video.currentTime);
         if (!wasPaused) {
             video.play();
         }
@@ -204,7 +192,7 @@ function toggleMute() {
 
 video.addEventListener("volumechange", () => {
     volumeslider.value = video.volume;
-    let volumeLevel
+    let volumeLevel;
     if (video.muted || video.volume === 0) {
         volumeslider.value = 0;
         volumeLevel = "muted";
@@ -214,10 +202,14 @@ video.addEventListener("volumechange", () => {
         volumeLevel = "high";
     }
 
-    videocontainer.dataset.volumeLevel = volumeLevel
+    videocontainer.dataset.volumeLevel = volumeLevel;
 });
 
 // Modes
+document.addEventListener("fullscreenchange", () => { videocontainer.classList.toggle("full-screen", document.fullscreenElement) })
+video.addEventListener("enterpictureinpicture", () => { videocontainer.classList.toggle("pip") })
+video.addEventListener("leavepictureinpicture", function () { videocontainer.classList.remove("pip") })
+
 function toggleFullscreenMode() {
     if (document.fullscreenElement == null) {
         videocontainer.requestFullscreen();
@@ -226,29 +218,20 @@ function toggleFullscreenMode() {
     }
 }
 
-document.addEventListener("fullscreenchange", function () {
-    videocontainer.classList.toggle("full-screen", document.fullscreenElement);
-})
-
 function togglePiPMode() {
     if (videocontainer.classList.contains("pip")) {
         document.exitPictureInPicture();
     } else {
         video.requestPictureInPicture();
-
     }
 }
 
-video.addEventListener("enterpictureinpicture", function () {
-    if (!videocontainer.classList.contains("pip")) { videocontainer.classList.add("pip"); }
-})
-
-video.addEventListener("leavepictureinpicture", function () {
-    videocontainer.classList.remove("pip");
-})
-
 // Play / Pause
+video.addEventListener("play", () => { videocontainer.classList.remove("paused") })
+video.addEventListener("pause", () => { videocontainer.classList.add("paused") })
+
 function togglePlay() {
+    sendVideoState(video.paused ? "Play" : "Pause", video.currentTime);
     video.paused ? video.play() : video.pause();
 }
 
@@ -266,30 +249,5 @@ document.addEventListener("keydown", e => {
         case "arrowright":
             skip(10);
             break;
-    }
-})
-
-video.addEventListener("play", () => {
-    videocontainer.classList.remove("paused");
-    if (isUserEvent) {
-        sendVideoState("Play", video.currentTime);
-    }
-    isUserEvent = false;
-})
-
-video.addEventListener("pause", () => {
-    videocontainer.classList.add("paused");
-    if (isUserEvent) {
-        sendVideoState("Pause", video.currentTime);
-    }
-    isUserEvent = false
-})
-
-video.addEventListener("seeked", () => {
-    if (!justJoined) {
-        if (isUserEvent) {
-            sendVideoState("Seek", video.currentTime)
-        }
-        isUserEvent = true;
     }
 })
