@@ -11,18 +11,65 @@ const video = document.getElementById("currentvideo");
 
 const videocontainer = document.querySelector(".video-container");
 
-document.body.addEventListener("htmx:wsOpen", function (event) {
-    ws = event.detail.socketWrapper;
-});
-
+// Server interaction
 document.body.addEventListener("htmx:wsBeforeMessage", function (event) {
     try {
-        var data = JSON.parse(event.detail.message);
+        let data = JSON.parse(event.detail.message);
+        event.preventDefault();
         handleServerEvent(data)
     } catch (e) {
-        // This fails if html is sent, so it doesnt really matter
+        // Html gets passed on to htmx
     }
 });
+
+function sendVideoState(state, time) {
+    if (justJoined) {
+        var message = {};
+        message["Join"] = true;
+        ws.send(JSON.stringify(message));
+        return;
+    }
+    var message = {};
+    message[state] = time !== undefined ? time : null;
+    var message = JSON.stringify(message);
+    ws.send(message);
+}
+
+function handleServerEvent(data) {
+    if (data.Join) {
+        if (justJoined) {
+            justJoined = false;
+            return;
+        }
+        isUserEvent = false;
+        sendVideoState("Seek", video.currentTime)
+    } else if (data.Play) {
+        isUserEvent = false;
+        video.currentTime = data.Play;
+        try {
+            video.play()
+        } catch (e) {
+            // I know this will fail before first interaction
+        }
+    } else if (data.Pause) {
+        isUserEvent = false;
+        video.currentTime = data.Pause
+        video.pause()
+    } else if (data.Seek) {
+        isUserEvent = false;
+        video.currentTime = data.Seek
+    } else if (data.State) {
+        if (data.State === "Playing") {
+            try {
+                video.play();
+            } catch (e) {
+                // I know this will fail before first interaction
+            }
+        } else if (data.State === "Paused") {
+            video.pause();
+        }
+    }
+}
 
 // Hovering
 let timeoutId;
@@ -187,11 +234,8 @@ function togglePiPMode() {
     if (videocontainer.classList.contains("pip")) {
         document.exitPictureInPicture();
     } else {
-        try {
-            video.requestPictureInPicture();
-        } catch (e) {
-            console.log(e);
-        }
+        video.requestPictureInPicture();
+
     }
 }
 
@@ -240,7 +284,6 @@ video.addEventListener("pause", () => {
     }
     isUserEvent = false
 })
-// ---
 
 video.addEventListener("seeked", () => {
     if (!justJoined) {
@@ -250,52 +293,3 @@ video.addEventListener("seeked", () => {
         isUserEvent = true;
     }
 })
-
-function sendVideoState(state, time) {
-    if (justJoined) {
-        var message = {};
-        message["Join"] = true;
-        ws.send(JSON.stringify(message));
-        return;
-    }
-    var message = {};
-    message[state] = time !== undefined ? time : null;
-    var message = JSON.stringify(message);
-    ws.send(message);
-}
-
-function handleServerEvent(data) {
-    if (data.Join) {
-        if (justJoined) {
-            justJoined = false;
-            return;
-        }
-        isUserEvent = false;
-        sendVideoState("Seek", video.currentTime)
-    } else if (data.Play) {
-        isUserEvent = false;
-        video.currentTime = data.Play;
-        try {
-            video.play()
-        } catch (e) {
-            // I know this will fail before first interaction
-        }
-    } else if (data.Pause) {
-        isUserEvent = false;
-        video.currentTime = data.Pause
-        video.pause()
-    } else if (data.Seek) {
-        isUserEvent = false;
-        video.currentTime = data.Seek
-    } else if (data.State) {
-        if (data.State === "Playing") {
-            try {
-                video.play();
-            } catch (e) {
-                // I know this will fail before first interaction
-            }
-        } else if (data.State === "Paused") {
-            video.pause();
-        }
-    }
-}

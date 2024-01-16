@@ -1,3 +1,8 @@
+<script>
+    document.body.addEventListener("htmx:wsOpen", function (event) {
+        ws = event.detail.socketWrapper;
+    });
+</script>
 <div class="video-container theater paused" hx-ext="ws" ws-connect="/video/session/ws/{{id}}" data-volume-level="high"
     hx-history="false">
     <script src="/scripts/video.js"></script>
