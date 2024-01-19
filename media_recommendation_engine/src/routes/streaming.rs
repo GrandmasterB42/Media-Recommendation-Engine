@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use askama::Template;
@@ -34,7 +34,6 @@ use crate::{
     utils::HandleErr,
 };
 
-// TODO: This entire module needs refactoring, notification passing is kind of messy and not that robust, i need to come up with a better solution
 // TODO: Improve this datastructure
 #[derive(Clone)]
 pub struct StreamingSessions(Arc<Mutex<HashMap<u32, Session>>>);
@@ -65,7 +64,7 @@ pub struct Session {
     stream: ServeFile,
     receivers: Vec<u32>,
     tx: broadcast::Sender<WSMessage>,
-    notification_sender: mpsc::Sender<(Notification, NotificationType)>,
+    notification_sender: mpsc::Sender<Notification>,
     state: SessionState,
 }
 
@@ -76,6 +75,7 @@ enum WSMessage {
     Pause(f32),
     Play(f32),
     Seek(f32),
+    Update((f32, SessionState)),
     Notification { msg: String },
 }
 
@@ -148,17 +148,14 @@ async fn ws_session(
 struct Notification {
     msg: String,
     script: String,
-    origin_: u32,
-    time_: f32,
+    typ: SimplifiedType,
 }
 
-#[derive(Clone, Copy, PartialEq)]
-enum NotificationType {
-    Join,
-    Leave,
-    Skip,
-    Pause,
-    Play,
+#[derive(Clone, PartialEq)]
+enum SimplifiedType {
+    StateToggle,
+    Seek,
+    None,
 }
 
 async fn ws_session_callback(socket: WebSocket, id: u32, sessions: StreamingSessions) {
@@ -169,15 +166,14 @@ async fn ws_session_callback(socket: WebSocket, id: u32, sessions: StreamingSess
     let (session_receiver, session_sender) = {
         let mut sessions = sessions.lock().await;
         let session = sessions.get_mut(&id);
-        if session.is_none() {
+        let Some(session) = session else {
             sender
                 .send(Message::Text(
                     Notification {
                         msg: "This session seems to be invalid... Falling back to previous page"
                             .to_owned(),
                         script: "/scripts/back.js".to_owned(),
-                        origin_: user_id,
-                        time_: 0.,
+                        typ: SimplifiedType::None,
                     }
                     .render()
                     .unwrap(),
@@ -185,8 +181,7 @@ async fn ws_session_callback(socket: WebSocket, id: u32, sessions: StreamingSess
                 .await
                 .log_err_with_msg("failed to notify client of invalid session");
             return;
-        }
-        let session = session.unwrap();
+        };
 
         session.receivers.push(user_id);
 
@@ -203,8 +198,9 @@ async fn ws_session_callback(socket: WebSocket, id: u32, sessions: StreamingSess
     let notification_sender = sessions.lock().await[&id].notification_sender.clone();
     let leave_sender = notification_sender.clone();
     let sessions_ref = sessions.clone();
+
     let mut recv_task = tokio::spawn(async move {
-        read(
+        receive_client_messages(
             receiver,
             session_sender,
             notification_sender.clone(),
@@ -214,7 +210,8 @@ async fn ws_session_callback(socket: WebSocket, id: u32, sessions: StreamingSess
         )
         .await
     });
-    let mut send_task = tokio::spawn(async move { write(sender, session_receiver).await });
+    let mut send_task =
+        tokio::spawn(async move { send_session_to_clients(sender, session_receiver).await });
 
     tokio::select! {
         _ = (&mut send_task) => {recv_task.abort()}
@@ -230,25 +227,21 @@ async fn ws_session_callback(socket: WebSocket, id: u32, sessions: StreamingSess
             sessions.remove(&id);
         } else {
             leave_sender
-                .send((
-                    Notification {
-                        msg: format!("{user_id} left the session"),
-                        script: String::new(),
-                        origin_: user_id,
-                        time_: 0.,
-                    },
-                    NotificationType::Leave,
-                ))
+                .send(Notification {
+                    msg: format!("{user_id} left the session"),
+                    script: String::new(),
+                    typ: SimplifiedType::None,
+                })
                 .await
                 .log_err_with_msg("failed to send notification");
         }
     }
 }
 
-async fn read(
+async fn receive_client_messages(
     mut client_receiver: SplitStream<WebSocket>,
     session_sender: broadcast::Sender<WSMessage>,
-    notification_sender: mpsc::Sender<(Notification, NotificationType)>,
+    notification_sender: mpsc::Sender<Notification>,
     session_id: u32,
     client_id: u32,
     sessions: StreamingSessions,
@@ -281,54 +274,44 @@ async fn read(
 
 async fn handle_client_message(
     session_sender: &broadcast::Sender<WSMessage>,
-    notification_sender: &mpsc::Sender<(Notification, NotificationType)>,
+    notification_sender: &mpsc::Sender<Notification>,
     text: String,
     session_id: u32,
     client_id: u32,
     sessions: &StreamingSessions,
 ) -> Result<(), ()> {
     let Ok(msg) = serde_json::from_str(&text) else {
-        debug!("Recieved malformed json from session websocket: {text}");
+        debug!("Received malformed json from session websocket: {text}");
         return Err(());
     };
 
     match msg {
         WSMessage::Pause(_) | WSMessage::Play(_) => {
             let mut sessions = sessions.lock().await;
-            let session = sessions.get_mut(&session_id);
-            if session.is_none() {
+            let Some(session) = sessions.get_mut(&session_id) else {
                 return Err(());
-            }
-            let session = session.unwrap();
-
-            send_notification(&session.state, notification_sender, &msg, client_id).await;
+            };
             match msg {
                 WSMessage::Pause(_) => session.state = SessionState::Paused,
                 WSMessage::Play(_) => session.state = SessionState::Playing,
                 _ => unreachable!(),
             }
+            send_notification(notification_sender, &msg, client_id).await;
         }
         WSMessage::Seek(_) => {
-            let sessions = sessions.lock().await;
-            let session = sessions.get(&session_id);
-            if session.is_none() {
-                return Err(());
-            }
-            let session = session.unwrap();
-            send_notification(&session.state, notification_sender, &msg, client_id).await
+            send_notification(notification_sender, &msg, client_id).await;
         }
         WSMessage::Join(_) => {
             let sessions = sessions.lock().await;
-            let session = sessions.get(&session_id);
-            if session.is_none() {
+            let Some(session) = sessions.get(&session_id) else {
                 return Err(());
-            }
-            let session = session.unwrap();
+            };
             session_sender
                 .send(WSMessage::State(session.state))
                 .log_err_with_msg("an error occured while sending a message to the session");
-            send_notification(&session.state, notification_sender, &msg, client_id).await;
+            send_notification(notification_sender, &msg, client_id).await;
         }
+        WSMessage::Update { .. } => (),
         WSMessage::State(_) | WSMessage::Notification { .. } => unreachable!(), // This should only be sent from the server
     }
 
@@ -339,76 +322,104 @@ async fn handle_client_message(
     Ok(())
 }
 
-async fn notifier(
-    mut receiver: mpsc::Receiver<(Notification, NotificationType)>,
-    session_sender: broadcast::Sender<WSMessage>,
-) {
-    // Limit notifications that actually get sent to clients
-    let mut last_notification: Option<(Notification, NotificationType)> = None;
-    let mut last_sent = UNIX_EPOCH;
+const NOTIFICATION_DELAY: Duration = Duration::from_millis(1000);
 
-    async fn lazy_or(
-        notification: &mut Option<(Notification, NotificationType)>,
-        new: &mut mpsc::Receiver<(Notification, NotificationType)>,
-    ) -> Option<(Notification, NotificationType)> {
-        if notification.is_some() {
-            let out = notification.clone();
-            *notification = None;
-            return out;
+struct NotificationQueue {
+    queue: Vec<Notification>,
+    last_sent: SystemTime,
+}
+
+impl NotificationQueue {
+    fn new() -> Self {
+        Self {
+            queue: Vec::new(),
+            last_sent: UNIX_EPOCH,
         }
-        new.recv().await
     }
 
-    while let Some((mut notification, typ)) = lazy_or(&mut last_notification, &mut receiver).await {
-        match typ {
-            NotificationType::Skip => {
-                if !last_sent.elapsed().is_ok_and(|dur| dur.as_millis() > 2000) {
-                    // It's been less than two second since the last notification
-                    tokio::select! {
-                        // it's more than a half a second after the last notification => send
-                        _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
-                            last_notification = None;
-                        },
-                        // In less than half a second, a new notification has been sent => don't send and see if it needs to be overwritten further
-                        _ = receiver.recv() => {
-                            last_notification = Some((notification, typ));
-                            continue;
-                        },
-                    }
-                } else {
-                    // It's been a long enough time since the last notification
-                    last_notification = None;
-                }
+    fn push(&mut self, notification: Notification) {
+        self.queue.push(notification);
+    }
+
+    fn get_and_reset(&mut self, delay: Duration) -> Option<Notification> {
+        if self.last_sent.elapsed().is_ok_and(|dur| dur >= delay) {
+            self.last_sent = SystemTime::now();
+            let out = self.queue.pop();
+            self.queue.clear();
+            return out;
+        }
+        None
+    }
+
+    fn get_maximum_delay(&self, other: &NotificationQueue) -> Duration {
+        let self_delay = {
+            if self.queue.is_empty() {
+                Duration::from_secs(0)
+            } else {
+                self.last_sent.elapsed().unwrap_or(NOTIFICATION_DELAY)
             }
-            // skipping while playing causes pause and then play to get sent, so wait if there is a play again, if yes, overwrite
-            NotificationType::Pause | NotificationType::Play => {
-                tokio::select! {
-                    _ = tokio::time::sleep(std::time::Duration::from_millis(150)) => {},
-                    new_notification = receiver.recv() => {
-                        if let Some((new_notification, NotificationType::Play)) = new_notification {
-                            notification = Notification {
-                                msg: seek_text(new_notification.origin_, new_notification.time_),
-                                script: String::new(),
-                                origin_: new_notification.origin_,
-                                time_: new_notification.time_,
-                            };
-                        }
-                    },
-                }
-                last_notification = None;
+        };
+
+        let other_delay = {
+            if other.queue.is_empty() {
+                Duration::from_secs(0)
+            } else {
+                other.last_sent.elapsed().unwrap_or(NOTIFICATION_DELAY)
             }
-            NotificationType::Leave | NotificationType::Join => (),
+        };
+
+        self_delay.max(other_delay)
+    }
+}
+
+async fn notifier(
+    mut receiver: mpsc::Receiver<Notification>,
+    session_sender: broadcast::Sender<WSMessage>,
+) {
+    let mut seek_queue = NotificationQueue::new();
+    let mut toggle_queue = NotificationQueue::new();
+
+    let mut notification: Option<Notification> = None;
+    let mut wait_duration = NOTIFICATION_DELAY;
+    while {
+        tokio::select! {
+            _ = tokio::time::sleep(wait_duration) => true,
+            noti = receiver.recv() => {
+                notification = noti;
+                true
+            },
+        }
+    } {
+        if let Some(new_notification) = notification.clone() {
+            match new_notification.typ {
+                SimplifiedType::Seek => seek_queue.push(new_notification),
+                SimplifiedType::StateToggle => toggle_queue.push(new_notification),
+                SimplifiedType::None => continue,
+            }
+            notification = None;
         }
 
-        let msg = notification
-            .render()
-            .log_err_with_msg("failed to render notification")
-            .unwrap_or_default();
+        let delay = seek_queue.get_maximum_delay(&toggle_queue);
+        if delay < NOTIFICATION_DELAY {
+            wait_duration = NOTIFICATION_DELAY - delay;
+        }
 
-        session_sender
-            .send(WSMessage::Notification { msg })
-            .log_err_with_msg("failed to send notification to session");
-        last_sent = SystemTime::now();
+        let seek = seek_queue.get_and_reset(NOTIFICATION_DELAY);
+        let toggle = toggle_queue.get_and_reset(NOTIFICATION_DELAY);
+
+        for notification in [seek, toggle].iter() {
+            let Some(notification) = notification else {
+                continue;
+            };
+            let msg = notification
+                .render()
+                .log_err_with_msg("failed to render notification")
+                .unwrap_or_default();
+
+            session_sender
+                .send(WSMessage::Notification { msg })
+                .log_err_with_msg("failed to send notification to session");
+        }
     }
 }
 
@@ -429,57 +440,38 @@ fn seek_text(client_id: u32, pos: f32) -> String {
 }
 
 async fn send_notification(
-    state: &SessionState,
-    notification_sender: &mpsc::Sender<(Notification, NotificationType)>,
+    notification_sender: &mpsc::Sender<Notification>,
     msg: &WSMessage,
     client_id: u32,
 ) {
-    // Send messages with regard to state, but not any previous messages
-    let (msg, typ, pos) = match msg {
-        WSMessage::Seek(pos) => {
-            if *pos != 0. {
-                let msg = seek_text(client_id, *pos);
-                (msg, NotificationType::Skip, pos)
-            } else {
-                return;
-            }
-        }
-        WSMessage::Join(_) => {
-            let msg = format!("{client_id} joined the session");
-            (msg, NotificationType::Join, &0.)
-        }
-        WSMessage::Pause(pos) => {
-            let msg = format!("{client_id} paused the video");
-            (msg, NotificationType::Pause, pos)
-        }
-        WSMessage::Play(pos) => match state {
-            SessionState::Paused => {
-                let msg = format!("{client_id} resumed the video");
-                (msg, NotificationType::Play, pos)
-            }
-            SessionState::Playing => {
-                let msg = seek_text(client_id, *pos);
-                (msg, NotificationType::Skip, &0.)
-            }
-        },
+    let (msg, typ) = match msg {
+        WSMessage::Seek(pos) => (seek_text(client_id, *pos), SimplifiedType::Seek),
+        WSMessage::Join(_) => (
+            format!("{client_id} joined the session"),
+            SimplifiedType::None,
+        ),
+        WSMessage::Pause(_) => (
+            format!("{client_id} paused the video"),
+            SimplifiedType::StateToggle,
+        ),
+        WSMessage::Play(_) => (
+            format!("{client_id} resumed the video"),
+            SimplifiedType::StateToggle,
+        ),
         _ => unreachable!(),
     };
 
     notification_sender
-        .send((
-            Notification {
-                msg,
-                script: String::new(),
-                origin_: client_id,
-                time_: *pos,
-            },
+        .send(Notification {
+            msg,
+            script: String::new(),
             typ,
-        ))
+        })
         .await
         .log_err_with_msg("failed to send notification");
 }
 
-async fn write(
+async fn send_session_to_clients(
     mut client_sender: SplitSink<WebSocket, Message>,
     mut session_receiver: broadcast::Receiver<WSMessage>,
 ) {

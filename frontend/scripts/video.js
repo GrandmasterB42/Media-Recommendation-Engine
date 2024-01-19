@@ -35,9 +35,10 @@ function sendVideoState(state, time) {
 
 function handleServerEvent(data) {
     if (data.Join) {
-        // TODO: This needs to be changed in some way
-        sendVideoState("Seek", video.currentTime);
-        sendVideoState(video.paused ? "Pause" : "Play", video.currentTime);
+        let message = {
+            "Update": [video.currentTime, video.paused ? "Paused" : "Playing"]
+        };
+        ws.send(JSON.stringify(message));
     } else if (data.Play && active) {
         video.currentTime = data.Play;
         video.play();
@@ -46,6 +47,13 @@ function handleServerEvent(data) {
         video.pause();
     } else if (data.Seek) {
         video.currentTime = data.Seek
+    } else if (data.Update) {
+        video.currentTime = data.Update[0];
+        if (data.Update[1] === "Playing") {
+            video.play();
+        } else if (data.Update[1] === "Paused") {
+            video.pause();
+        }
     } else if (data.State && active) {
         if (data.State === "Playing") {
             video.play();
@@ -173,6 +181,7 @@ function formatDuration(duration) {
 
 function skip(seconds) {
     video.currentTime += seconds;
+    sendVideoState("Seek", video.currentTime);
 }
 
 // Volume
