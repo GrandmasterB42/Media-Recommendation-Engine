@@ -83,9 +83,8 @@ async fn get_sessions(State(sessions): State<StreamingSessions>) -> AppResult<im
 
 async fn render_sessions(sessions: StreamingSessions) -> Vec<GridElement> {
     sessions
-        .lock()
+        .get_sessions()
         .await
-        .iter()
         .map(|(id, _session)| GridElement {
             title: format!("Session {id}"),
             redirect_entire: frontend_redirect(&format!("/video/session/{id}"), HXTarget::All),

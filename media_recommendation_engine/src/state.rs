@@ -10,7 +10,7 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(database: Database) -> Self {
-        let streaming_sessions = StreamingSessions::default();
+        let streaming_sessions = StreamingSessions::new();
         Self {
             database,
             streaming_sessions,
