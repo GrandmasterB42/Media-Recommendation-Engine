@@ -7,14 +7,11 @@
 .notification {
     position: relative;
     padding: 10px;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    background-color: #fff;
-    box-shadow: 0 1px 1px rgba(0, 0, 0, .05);
     margin: 10px;
-    color: #333;
     animation-name: fadeinout;
     animation-duration: 2.5s;
+    border-radius: 4px;
+    background: linear-gradient(225deg, #171717, #1c1c1c);
 }
 
 @keyframes fadeinout {
