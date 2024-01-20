@@ -128,13 +128,14 @@ pub enum SessionState {
     Paused,
 }
 
+// TODO: This datastructure needs to change, but works for now i guess
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum WSMessage {
     State(SessionState),
     Join(bool), // bool is included to generate actual json, not just "Join"
     Pause(f32),
     Play(f32),
-    Seek(f32),
+    Seek((f32, u64)),
     Update((f32, SessionState)),
     Notification { msg: String },
 }
@@ -493,7 +494,7 @@ async fn send_notification(
     client_id: u32,
 ) {
     let (msg, typ) = match msg {
-        WSMessage::Seek(pos) => (seek_text(client_id, *pos), SimplifiedType::Seek),
+        WSMessage::Seek(pos) => (seek_text(client_id, pos.0), SimplifiedType::Seek),
         WSMessage::Join(_) => (
             format!("{client_id} joined the session"),
             SimplifiedType::None,

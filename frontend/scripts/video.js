@@ -27,9 +27,9 @@ async function wait_for_interact() {
 }
 setTimeout(wait_for_interact, 100); // Give the websocket a chance to connect
 
-function sendVideoState(state, time) {
+function sendVideoState(state, data) {
     let message = {};
-    message[state] = time !== undefined ? time : null;
+    message[state] = data !== undefined ? data : null;
     ws.send(JSON.stringify(message));
 }
 
@@ -41,31 +41,37 @@ function handleServerEvent(data) {
             justJoined = false;
             return;
         }
-        let message = {
-            "Update": [video.currentTime, video.paused ? "Paused" : "Playing"]
-        };
-        ws.send(JSON.stringify(message));
+        sendVideoState("Update", [video.currentTime, video.paused ? "Paused" : "Playing"]);
     } else if (data.Play && active) {
         video.currentTime = data.Play;
         video.play();
+        videocontainer.classList.remove("paused");
     } else if (data.Pause) {
         video.currentTime = data.Pause;
         video.pause();
+        videocontainer.classList.add("paused");
     } else if (data.Seek) {
-        video.currentTime = data.Seek
+        let elapsed_since_send = Date.now() - data.Seek[1];
+        let time = data.Seek[0] + elapsed_since_send / 1000;
+        video.currentTime = time;
     } else if (data.Update) {
         video.currentTime = data.Update[0];
         if (data.Update[1] === "Playing") {
             video.play();
+            videocontainer.classList.remove("paused");
         } else if (data.Update[1] === "Paused") {
             video.pause();
+            videocontainer.classList.add("paused");
         }
     } else if (data.State && active) {
         if (data.State === "Playing") {
             video.play();
+            videocontainer.classList.remove("paused");
         } else if (data.State === "Paused") {
             video.pause();
+            videocontainer.classList.add("paused");
         }
+
     }
 }
 
@@ -127,7 +133,7 @@ function toggleScrubbing(e) {
         video.pause();
     } else {
         video.currentTime = video.duration * percent;
-        sendVideoState("Seek", video.currentTime);
+        sendVideoState("Seek", [video.currentTime, Date.now()]);
         if (!wasPaused) {
             video.play();
         }
@@ -187,7 +193,7 @@ function formatDuration(duration) {
 
 function skip(seconds) {
     video.currentTime += seconds;
-    sendVideoState("Seek", video.currentTime);
+    sendVideoState("Seek", [video.currentTime, Date.now()]);
 }
 
 // Volume
