@@ -122,22 +122,46 @@ impl Session {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+enum WSMessage {
+    /// These are only received from the client
+    Update {
+        message_type: WSMessageType,
+        timestamp: u64,
+        video_time: f32,
+        state: SessionState,
+    },
+    /// These are only sent from the server
+    Notification { msg: String, origin: u32 },
+    /// This is a special one time message from the client to make other instances send their current state
+    Join,
+}
+
+impl WSMessage {
+    fn new_state(state: SessionState) -> Self {
+        Self::Update {
+            message_type: WSMessageType::State,
+            timestamp: 0,
+            video_time: 0.0,
+            state,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+enum WSMessageType {
+    Play,
+    Pause,
+    Seek,
+    State,
+    Update,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum SessionState {
     Playing,
     Paused,
-}
-
-// TODO: This datastructure needs to change, but works for now i guess
-#[derive(Debug, Clone, Serialize, Deserialize)]
-enum WSMessage {
-    State(SessionState),
-    Join(bool), // bool is included to generate actual json, not just "Join"
-    Pause(f32),
-    Play(f32),
-    Seek((f32, u64)),
-    Update((f32, SessionState)),
-    Notification { msg: String },
 }
 
 // TODO: Actual permissions would be great, not just showing it on the front page
@@ -197,6 +221,7 @@ struct Notification {
     msg: String,
     script: String,
     typ: SimplifiedType,
+    origin: u32,
 }
 
 #[derive(Clone, PartialEq)]
@@ -221,6 +246,7 @@ async fn ws_session_callback(socket: WebSocket, id: u32, mut sessions: Streaming
                             .to_owned(),
                         script: "/scripts/back.js".to_owned(),
                         typ: SimplifiedType::None,
+                        origin: 0,
                     }
                     .render()
                     .unwrap(),
@@ -234,7 +260,7 @@ async fn ws_session_callback(socket: WebSocket, id: u32, mut sessions: Streaming
 
         sender
             .send(Message::Text(
-                serde_json::to_string(&WSMessage::State(session.get_state().await)).unwrap(),
+                serde_json::to_string(&WSMessage::new_state(session.get_state().await)).unwrap(),
             ))
             .await
             .log_err_with_msg("failed to notify client of current state");
@@ -262,7 +288,9 @@ async fn ws_session_callback(socket: WebSocket, id: u32, mut sessions: Streaming
         .await
     });
     let mut send_task =
-        tokio::spawn(async move { send_session_to_clients(sender, session_receiver).await });
+        tokio::spawn(
+            async move { send_session_to_clients(sender, session_receiver, user_id).await },
+        );
 
     tokio::select! {
         _ = (&mut send_task) => {recv_task.abort()}
@@ -279,6 +307,7 @@ async fn ws_session_callback(socket: WebSocket, id: u32, mut sessions: Streaming
                 msg: format!("{user_id} left the session"),
                 script: String::new(),
                 typ: SimplifiedType::None,
+                origin: 0,
             })
             .await
             .log_err_with_msg("failed to send notification");
@@ -336,26 +365,24 @@ async fn handle_client_message(
         return Err(());
     };
 
-    match msg {
-        WSMessage::Pause(_) | WSMessage::Play(_) => {
-            match msg {
-                WSMessage::Pause(_) => session.set_state(SessionState::Paused).await,
-                WSMessage::Play(_) => session.set_state(SessionState::Playing).await,
-                _ => unreachable!(),
+    match &msg {
+        WSMessage::Update { message_type, .. } => 'update_block: {
+            match message_type {
+                WSMessageType::Pause => session.set_state(SessionState::Paused).await,
+                WSMessageType::Play => session.set_state(SessionState::Playing).await,
+                WSMessageType::Seek => (),
+                WSMessageType::Update => break 'update_block,
+                WSMessageType::State => unreachable!(), // Only the server should send this
             }
             send_notification(notification_sender, &msg, client_id).await;
         }
-        WSMessage::Seek(_) => {
-            send_notification(notification_sender, &msg, client_id).await;
-        }
-        WSMessage::Join(_) => {
+        WSMessage::Join => {
             session_sender
-                .send(WSMessage::State(session.get_state().await))
+                .send(WSMessage::new_state(session.get_state().await))
                 .log_err_with_msg("an error occured while sending a message to the session");
             send_notification(notification_sender, &msg, client_id).await;
         }
-        WSMessage::Update { .. } => (),
-        WSMessage::State(_) | WSMessage::Notification { .. } => unreachable!(), // This should only be sent from the server
+        WSMessage::Notification { .. } => unreachable!(), // Only the server should send this
     }
 
     session_sender
@@ -468,7 +495,10 @@ fn send_to_session(sender: &broadcast::Sender<WSMessage>, notification: &Notific
         .unwrap_or_default();
 
     sender
-        .send(WSMessage::Notification { msg })
+        .send(WSMessage::Notification {
+            msg,
+            origin: notification.origin,
+        })
         .log_err_with_msg("failed to send notification to session");
 }
 
@@ -494,19 +524,26 @@ async fn send_notification(
     client_id: u32,
 ) {
     let (msg, typ) = match msg {
-        WSMessage::Seek(pos) => (seek_text(client_id, pos.0), SimplifiedType::Seek),
-        WSMessage::Join(_) => (
+        WSMessage::Join => (
             format!("{client_id} joined the session"),
             SimplifiedType::None,
         ),
-        WSMessage::Pause(_) => (
-            format!("{client_id} paused the video"),
-            SimplifiedType::StateToggle,
-        ),
-        WSMessage::Play(_) => (
-            format!("{client_id} resumed the video"),
-            SimplifiedType::StateToggle,
-        ),
+        WSMessage::Update {
+            message_type,
+            video_time,
+            ..
+        } => match message_type {
+            WSMessageType::Pause => (
+                format!("{client_id} paused the video"),
+                SimplifiedType::StateToggle,
+            ),
+            WSMessageType::Play => (
+                format!("{client_id} resumed the video"),
+                SimplifiedType::StateToggle,
+            ),
+            WSMessageType::Seek => (seek_text(client_id, *video_time), SimplifiedType::Seek),
+            _ => unreachable!(),
+        },
         _ => unreachable!(),
     };
 
@@ -515,6 +552,7 @@ async fn send_notification(
             msg,
             script: String::new(),
             typ,
+            origin: client_id,
         })
         .await
         .log_err_with_msg("failed to send notification");
@@ -523,10 +561,16 @@ async fn send_notification(
 async fn send_session_to_clients(
     mut client_sender: SplitSink<WebSocket, Message>,
     mut session_receiver: broadcast::Receiver<WSMessage>,
+    client_id: u32,
 ) {
     while let Ok(msg) = session_receiver.recv().await {
         let msg = match msg {
-            WSMessage::Notification { msg, .. } => msg,
+            WSMessage::Notification { msg, origin, .. } => {
+                if origin == client_id {
+                    continue;
+                }
+                msg
+            }
             _ => serde_json::to_string(&msg).unwrap(),
         };
 

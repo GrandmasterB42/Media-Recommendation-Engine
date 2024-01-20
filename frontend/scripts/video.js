@@ -22,56 +22,78 @@ async function wait_for_interact() {
         await new Promise(r => setTimeout(r, 100));
     }
     active = true;
-    let message = { "Join": true };
+    let message = {
+        "type": "Join"
+    }
     ws.send(JSON.stringify(message));
 }
 setTimeout(wait_for_interact, 100); // Give the websocket a chance to connect
 
-function sendVideoState(state, data) {
-    let message = {};
-    message[state] = data !== undefined ? data : null;
+function sendVideoUpdate(type) {
+    let message = {
+        "type": "Update",
+        "message_type": type,
+        "timestamp": Date.now(),
+        "video_time": video.currentTime,
+        "state": video.paused ? "Paused" : "Playing"
+    };
     ws.send(JSON.stringify(message));
 }
 
 
 let justJoined = true;
 function handleServerEvent(data) {
-    if (data.Join) {
+    let type = data["type"];
+    if (type === "Join") {
         if (justJoined) {
             justJoined = false;
             return;
         }
-        sendVideoState("Update", [video.currentTime, video.paused ? "Paused" : "Playing"]);
-    } else if (data.Play && active) {
-        video.currentTime = data.Play;
+        sendVideoUpdate("Update");
+    } else if (type == "Update") {
+        let update_type = data["message_type"];
+        let timestamp = data["timestamp"];
+        let time = data["video_time"];
+        let state = data["state"];
+
+        let elapsed_since_send = Date.now() - timestamp;
+
+        if (update_type == "Play" && active) {
+            adjustvideo(state, time, elapsed_since_send);
+        } else if (update_type == "Pause") {
+            adjustvideo(state, time, elapsed_since_send);
+        } else if (update_type == "Seek") {
+            video.currentTime = time + elapsed_since_send / 1000;
+        } else if (update_type == "State" && active) { // No information but the state is accurate here
+            if (state === "Playing") {
+                video.play();
+                videocontainer.classList.remove("paused");
+            } else if (state === "Paused") {
+                video.pause();
+                videocontainer.classList.add("paused");
+            }
+        } else if (update_type == "Update" && active) {
+            adjustvideo(state, time, elapsed_since_send);
+        }
+    } else {
+        console.log("Unknown type: ", type);
+    }
+}
+
+// TODO: The video playback still gets out of sync, even on local devices, maybe there is a flaw here that i overlookeed
+function adjustvideo(new_state, new_time, elapsed_since_send) {
+    if (new_state === "Playing" && !video.paused) {
+        video.currentTime = new_time + elapsed_since_send / 1000;
+    } else if (new_state == "Playing" && video.paused) {
+        video.currentTime = new_time + elapsed_since_send / 1000;
         video.play();
         videocontainer.classList.remove("paused");
-    } else if (data.Pause) {
-        video.currentTime = data.Pause;
+    } else if (new_state === "Paused" && !video.paused) {
+        video.currentTime = new_time;
         video.pause();
         videocontainer.classList.add("paused");
-    } else if (data.Seek) {
-        let elapsed_since_send = Date.now() - data.Seek[1];
-        let time = data.Seek[0] + elapsed_since_send / 1000;
-        video.currentTime = time;
-    } else if (data.Update) {
-        video.currentTime = data.Update[0];
-        if (data.Update[1] === "Playing") {
-            video.play();
-            videocontainer.classList.remove("paused");
-        } else if (data.Update[1] === "Paused") {
-            video.pause();
-            videocontainer.classList.add("paused");
-        }
-    } else if (data.State && active) {
-        if (data.State === "Playing") {
-            video.play();
-            videocontainer.classList.remove("paused");
-        } else if (data.State === "Paused") {
-            video.pause();
-            videocontainer.classList.add("paused");
-        }
-
+    } else if (new_state === "Paused" && video.paused) {
+        video.currentTime = new_time;
     }
 }
 
@@ -133,10 +155,10 @@ function toggleScrubbing(e) {
         video.pause();
     } else {
         video.currentTime = video.duration * percent;
-        sendVideoState("Seek", [video.currentTime, Date.now()]);
         if (!wasPaused) {
             video.play();
         }
+        sendVideoUpdate("Seek");
     }
 
     handleTimelineUpdate(e);
@@ -193,7 +215,7 @@ function formatDuration(duration) {
 
 function skip(seconds) {
     video.currentTime += seconds;
-    sendVideoState("Seek", [video.currentTime, Date.now()]);
+    sendVideoUpdate("Seek");
 }
 
 // Volume
@@ -246,7 +268,6 @@ function togglePiPMode() {
 
 // Play / Pause
 function togglePlay() {
-    sendVideoState(video.paused ? "Play" : "Pause", video.currentTime);
     if (video.paused) {
         videocontainer.classList.remove("paused");
         video.play();
@@ -254,6 +275,7 @@ function togglePlay() {
         videocontainer.classList.add("paused");
         video.pause();
     }
+    sendVideoUpdate(video.paused ? "Pause" : "Play");
 }
 
 document.addEventListener("keydown", e => {
