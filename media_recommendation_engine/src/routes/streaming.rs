@@ -394,7 +394,11 @@ async fn notifier(
             match new_notification.typ {
                 SimplifiedType::Seek => seek_queue.push(new_notification),
                 SimplifiedType::StateToggle => toggle_queue.push(new_notification),
-                SimplifiedType::None => continue,
+                SimplifiedType::None => {
+                    send_to_session(&session_sender, &new_notification);
+                    notification = None;
+                    continue;
+                }
             }
             notification = None;
         }
@@ -411,16 +415,20 @@ async fn notifier(
             let Some(notification) = notification else {
                 continue;
             };
-            let msg = notification
-                .render()
-                .log_err_with_msg("failed to render notification")
-                .unwrap_or_default();
-
-            session_sender
-                .send(WSMessage::Notification { msg })
-                .log_err_with_msg("failed to send notification to session");
+            send_to_session(&session_sender, notification);
         }
     }
+}
+
+fn send_to_session(sender: &broadcast::Sender<WSMessage>, notification: &Notification) {
+    let msg = notification
+        .render()
+        .log_err_with_msg("failed to render notification")
+        .unwrap_or_default();
+
+    sender
+        .send(WSMessage::Notification { msg })
+        .log_err_with_msg("failed to send notification to session");
 }
 
 fn seek_text(client_id: u32, pos: f32) -> String {

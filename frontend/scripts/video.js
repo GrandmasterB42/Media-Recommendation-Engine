@@ -33,8 +33,14 @@ function sendVideoState(state, time) {
     ws.send(JSON.stringify(message));
 }
 
+
+let justJoined = true;
 function handleServerEvent(data) {
     if (data.Join) {
+        if (justJoined) {
+            justJoined = false;
+            return;
+        }
         let message = {
             "Update": [video.currentTime, video.paused ? "Paused" : "Playing"]
         };
