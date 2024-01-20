@@ -239,12 +239,15 @@ function togglePiPMode() {
 }
 
 // Play / Pause
-video.addEventListener("play", () => { videocontainer.classList.remove("paused") })
-video.addEventListener("pause", () => { videocontainer.classList.add("paused") })
-
 function togglePlay() {
     sendVideoState(video.paused ? "Play" : "Pause", video.currentTime);
-    video.paused ? video.play() : video.pause();
+    if (video.paused) {
+        videocontainer.classList.remove("paused");
+        video.play();
+    } else {
+        videocontainer.classList.add("paused");
+        video.pause();
+    }
 }
 
 document.addEventListener("keydown", e => {
