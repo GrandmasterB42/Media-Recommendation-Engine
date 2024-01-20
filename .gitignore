@@ -2,3 +2,5 @@
 Cargo.lock
 database/database.sqlite
 database/database.sqlite-journal
+database/database.sqlite-shm
+database/database.sqlite-wal
