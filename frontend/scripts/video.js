@@ -6,6 +6,8 @@ temp_video.replaceWith(temp_video.cloneNode(true));
 const video = document.getElementById("currentvideo");
 const videocontainer = document.querySelector(".video-container");
 
+let rn = Infinity;
+
 document.body.addEventListener("htmx:wsBeforeMessage", (event) => {
     try {
         let data = JSON.parse(event.detail.message);
@@ -75,6 +77,10 @@ function handleServerEvent(data) {
         } else if (update_type == "Update" && active) {
             adjustvideo(state, time, elapsed_since_send);
         }
+    } else if (type == "RequestNext") {
+        rn = data.at_greater_than;
+    } else if (type == "Reload") {
+        reload();
     } else {
         console.log("Unknown type: ", type);
     }
@@ -197,6 +203,14 @@ video.addEventListener("timeupdate", () => {
     currenttime.textContent = formatDuration(video.currentTime);
     const percent = video.currentTime / video.duration;
     timelinecontainer.style.setProperty("--progress-position", percent);
+
+    if (rn <= video.currentTime) {
+        let message = {
+            "type": "SendNext"
+        };
+        ws.send(JSON.stringify(message));
+        rn = Infinity;
+    }
 })
 
 const leadingZeroFormatter = new Intl.NumberFormat(undefined, {
@@ -248,7 +262,7 @@ video.addEventListener("volumechange", () => {
 // Modes
 document.addEventListener("fullscreenchange", () => { videocontainer.classList.toggle("full-screen", document.fullscreenElement) })
 video.addEventListener("enterpictureinpicture", () => { videocontainer.classList.toggle("pip") })
-video.addEventListener("leavepictureinpicture", function () { videocontainer.classList.remove("pip") })
+video.addEventListener("leavepictureinpicture", () => { videocontainer.classList.remove("pip") })
 
 function toggleFullscreenMode() {
     if (document.fullscreenElement == null) {
@@ -294,3 +308,29 @@ document.addEventListener("keydown", e => {
             break;
     }
 })
+
+// function for popup redirect
+function confirmpopup(id) {
+    let message = {
+        "type": "SwitchTo",
+        "id": id
+    };
+    ws.send(JSON.stringify(message));
+}
+
+function reload() {
+    let paused = video.paused;
+    video.pause();
+    video.currentTime = 0;
+
+    tmp = video.src;
+    video.src = "";
+    video.src = tmp;
+
+    let popup = document.querySelector(".popup");
+    popup.parentNode.removeChild(popup);// TODO: Make this failing not matter
+
+    if (!paused) {
+        video.play();
+    }
+}

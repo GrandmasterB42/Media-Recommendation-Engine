@@ -1,0 +1,14 @@
+#popups {
+    position: absolute;
+    bottom: 5vw;
+    right: 0.5vw;
+    z-index: 1001;
+}
+
+.popup {
+    position: relative;
+    padding: 10px;
+    margin: 10px;
+    border-radius: 4px;
+    background: linear-gradient(225deg, #171717, #1c1c1c);
+}

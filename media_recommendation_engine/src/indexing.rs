@@ -17,14 +17,18 @@ use crate::{
 pub async fn periodic_indexing(db: Database) -> ! {
     loop {
         // TODO: Handle this error better?
-        indexing(&db).log_err_with_msg("Failed the indexing");
+        let conn = db
+            .get()
+            .expect("Failed to get database connection for indexing");
+        conn.call(|conn| Ok(indexing(conn).log_err_with_msg("Failed the indexing")))
+            .await
+            .log_err_with_msg("failed to index");
         // TODO: Setting for this duration?
         tokio::time::sleep(Duration::from_secs(60 * 5)).await;
     }
 }
 
-fn indexing(db: &Database) -> AppResult<()> {
-    let conn = db.get()?;
+fn indexing(conn: &rusqlite::Connection) -> AppResult<()> {
     let locations: Vec<String> = conn
         .prepare("SELECT path FROM storage_locations")?
         .query_map_get([])?
@@ -59,7 +63,7 @@ fn indexing(db: &Database) -> AppResult<()> {
         })
         .collect::<AppResult<Vec<_>>>()?;
 
-    classify_new_files(&conn, files)?;
+    classify_new_files(conn, files)?;
 
     // TODO: Removals will probably have to do more than just remove the data_file
     // Important: Don't delete any directly user facing info, is still important for recommendation, maybe consider deletion when recommending?

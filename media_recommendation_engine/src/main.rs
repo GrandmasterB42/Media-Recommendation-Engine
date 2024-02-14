@@ -1,5 +1,7 @@
 #![feature(pattern)]
 
+extern crate ffmpeg_next as ffmpeg;
+
 use axum::{
     http::{HeaderName, HeaderValue},
     response::Redirect,
@@ -24,12 +26,14 @@ use crate::{
 mod utils;
 mod database;
 mod indexing;
+mod recommendor;
 mod routes;
 mod state;
 
 #[tokio::main]
 async fn main() {
     init_tracing();
+    ffmpeg::init().expect("failed to initialize ffmpeg");
 
     let args = std::env::args().collect::<Vec<_>>();
     if args.get(1).is_some_and(|a| a == "delete_db") {
@@ -37,7 +41,9 @@ async fn main() {
         std::fs::remove_file("database/database.sqlite-journal").ignore();
     }
 
-    let db = Database::new().expect("failed to connect to database");
+    let db = Database::new()
+        .await
+        .expect("failed to connect to database");
 
     let app = Router::new()
         .merge(tracing_layer())

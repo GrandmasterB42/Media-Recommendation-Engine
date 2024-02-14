@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     mem,
+    pin::Pin,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -18,9 +19,10 @@ use axum::{
     Router,
 };
 
+use ffmpeg::format;
 use futures_util::{
     stream::{SplitSink, SplitStream},
-    SinkExt, StreamExt,
+    Future, SinkExt, StreamExt,
 };
 
 use serde::{Deserialize, Serialize};
@@ -31,8 +33,9 @@ use tracing::debug;
 
 use crate::{
     database::{Database, QueryRowGetConnExt},
+    recommendor::RecommendationPopup,
     state::{AppResult, AppState},
-    utils::HandleErr,
+    utils::{pseudo_random, HandleErr},
 };
 
 #[derive(Clone)]
@@ -71,34 +74,62 @@ impl StreamingSessions {
     }
 }
 
+// TODO: This datastructure can be refactored, for example move video_id and file_path into a Stream struct, which is behimd a single mutex, also store what kind it was, so that can be used for the recommendation
 pub struct Session {
-    _video_id: u64,
+    video_id: Mutex<u64>,
+    file_path: Mutex<String>,
     stream: Mutex<ServeFile>,
     receivers: Mutex<Vec<u32>>,
     websocket_sender: broadcast::Sender<WSMessage>,
     notification_sender: mpsc::Sender<Notification>,
     state: Mutex<SessionState>,
+    time_estimate: Mutex<TimeKeeper>,
+    next_recommended: Mutex<RecommendationPopupState>,
 }
 
 impl Session {
-    fn new(
-        _video_id: u64,
+    async fn new(
+        db: &Database,
+        video_id: u64,
         stream: ServeFile,
         notification_sender: mpsc::Sender<Notification>,
         websocket_sender: broadcast::Sender<WSMessage>,
-    ) -> Self {
-        Self {
-            _video_id,
+    ) -> AppResult<Self> {
+        let file_path: String = db
+            .get()?
+            .call(move |conn| {
+                conn.query_row_get("SELECT path FROM data_files WHERE id=?1", [video_id])
+                    .map_err(Into::into)
+            })
+            .await?;
+
+        let media_context = format::input(&file_path)?;
+        let total_time = media_context.duration() as f64 / f64::from(ffmpeg::ffi::AV_TIME_BASE);
+
+        let time_estimate = Mutex::new(TimeKeeper::new(total_time));
+
+        let next_recommended = Mutex::new(RecommendationPopupState::new(db, video_id));
+
+        Ok(Self {
+            video_id: Mutex::new(video_id),
+            file_path: Mutex::new(file_path),
             stream: Mutex::new(stream),
             receivers: Mutex::new(Vec::new()),
             websocket_sender,
             notification_sender,
             state: Mutex::new(SessionState::Playing),
-        }
+            time_estimate,
+            next_recommended,
+        })
     }
 
     async fn stream(&self) -> MutexGuard<ServeFile> {
         self.stream.lock().await
+    }
+
+    async fn replace_stream(&self, stream: ServeFile, path: &str) {
+        *self.stream.lock().await = stream;
+        *self.file_path.lock().await = path.to_owned();
     }
 
     async fn add_receiver(&self, id: u32) {
@@ -120,6 +151,82 @@ impl Session {
     async fn set_state(&self, state: SessionState) {
         *self.state.lock().await = state;
     }
+
+    async fn update_timekeeper(&self, time: f64, state: &SessionState) {
+        let mut timekeeper = self.time_estimate.lock().await;
+        timekeeper.update(time, state);
+    }
+
+    async fn get_popup(&self) -> AppResult<String> {
+        self.next_recommended.lock().await.get_popup().await
+    }
+
+    async fn when_to_recommend(&self) -> f32 {
+        let timekeeper = self.time_estimate.lock().await;
+        timekeeper.total_time as f32 * 0.95
+    }
+}
+
+struct TimeKeeper {
+    last_known_time: f64,
+    total_time: f64,
+    currently_playing: bool,
+    last_update: SystemTime,
+}
+
+impl TimeKeeper {
+    fn new(total_time: f64) -> Self {
+        Self {
+            last_known_time: 0.0,
+            total_time,
+            currently_playing: true,
+            last_update: SystemTime::now(),
+        }
+    }
+
+    fn update(&mut self, time: f64, state: &SessionState) {
+        self.currently_playing = match state {
+            SessionState::Paused => false,
+            SessionState::Playing => true,
+        };
+        self.last_known_time = time;
+        self.last_update = SystemTime::now();
+    }
+}
+
+type PopupFuture = Pin<Box<dyn Future<Output = AppResult<RecommendationPopup>> + Send + Sync>>;
+
+enum Store<A, B> {
+    Future(A),
+    Result(B),
+}
+struct RecommendationPopupState {
+    inner: Store<PopupFuture, String>,
+}
+
+impl RecommendationPopupState {
+    fn new(db: &Database, video_id: u64) -> Self {
+        let db = db.clone();
+        Self {
+            inner: Store::Future(Box::pin(RecommendationPopup::new(db, video_id))),
+        }
+    }
+
+    // I think this currently does all the work in this one await call, but it is supposed to be computed in the background, works for now
+    async fn get_popup(&mut self) -> AppResult<String> {
+        match self.inner {
+            Store::Future(ref mut f) => {
+                let popup = f.await?;
+                let result = popup
+                    .render()
+                    .log_err_with_msg("failed to render")
+                    .unwrap_or_default();
+                self.inner = Store::Result(result.clone());
+                Ok(result)
+            }
+            Store::Result(ref r) => Ok(r.clone()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -132,8 +239,19 @@ enum WSMessage {
         video_time: f32,
         state: SessionState,
     },
+    SendNext,
+    SwitchTo {
+        id: u64,
+    },
     /// These are only sent from the server
-    Notification { msg: String, origin: u32 },
+    Notification {
+        msg: String,
+        origin: u32,
+    },
+    RequestNext {
+        at_greater_than: f32,
+    },
+    Reload,
     /// This is a special one time message from the client to make other instances send their current state
     Join,
 }
@@ -146,6 +264,15 @@ impl WSMessage {
             video_time: 0.0,
             state,
         }
+    }
+
+    fn new_notification(msg: &impl Template, origin: u32) -> Self {
+        // TODO: general template render function that doesn't error, but just logs the error
+        let msg = msg
+            .render()
+            .log_err_with_msg("failed to render notification")
+            .unwrap_or_default();
+        Self::Notification { msg, origin }
     }
 }
 
@@ -194,14 +321,21 @@ async fn new_session(
     let random = pseudo_random();
 
     let conn = db.get()?;
-    let path: String = conn.query_row_get("SELECT path FROM data_files WHERE id=?1", [id])?;
+
+    let path: String = conn
+        .call(move |conn| {
+            conn.query_row_get("SELECT path FROM data_files WHERE id=?1", [id])
+                .map_err(Into::into)
+        })
+        .await?;
+
     let serve_file = ServeFile::new(path);
 
     let (websocket_sender, _) = broadcast::channel(32);
     let (notification_sender, notification_receiver) = mpsc::channel(32);
     tokio::spawn(notifier(notification_receiver, websocket_sender.clone()));
 
-    let session = Session::new(id, serve_file, notification_sender, websocket_sender);
+    let session = Session::new(&db, id, serve_file, notification_sender, websocket_sender).await?;
     sessions.insert(random, session).await;
 
     Ok(Redirect::temporary(&format!("/video/session/{random}")))
@@ -211,8 +345,9 @@ async fn ws_session(
     ws: WebSocketUpgrade,
     Path(id): Path<u32>,
     State(sessions): State<StreamingSessions>,
+    State(db): State<Database>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| ws_session_callback(socket, id, sessions))
+    ws.on_upgrade(move |socket| ws_session_callback(socket, id, sessions, db))
 }
 
 #[derive(Template, Clone)]
@@ -231,7 +366,12 @@ enum SimplifiedType {
     None,
 }
 
-async fn ws_session_callback(socket: WebSocket, id: u32, mut sessions: StreamingSessions) {
+async fn ws_session_callback(
+    socket: WebSocket,
+    id: u32,
+    mut sessions: StreamingSessions,
+    db: Database,
+) {
     let user_id = pseudo_random();
 
     let (mut sender, receiver) = socket.split();
@@ -249,7 +389,10 @@ async fn ws_session_callback(socket: WebSocket, id: u32, mut sessions: Streaming
                         origin: 0,
                     }
                     .render()
-                    .unwrap(),
+                    .log_err_with_msg(
+                        "failed to render fallback notification, this should never happen",
+                    )
+                    .unwrap_or_default(),
                 ))
                 .await
                 .log_err_with_msg("failed to notify client of invalid session");
@@ -278,15 +421,17 @@ async fn ws_session_callback(socket: WebSocket, id: u32, mut sessions: Streaming
 
     let mut recv_task = tokio::spawn(async move {
         receive_client_messages(
+            &db,
             receiver,
             session_sender,
-            notification_sender.clone(),
+            notification_sender,
             id,
             user_id,
             sessions_ref,
         )
         .await
     });
+
     let mut send_task =
         tokio::spawn(
             async move { send_session_to_clients(sender, session_receiver, user_id).await },
@@ -315,13 +460,14 @@ async fn ws_session_callback(socket: WebSocket, id: u32, mut sessions: Streaming
 }
 
 async fn receive_client_messages(
+    db: &Database,
     mut client_receiver: SplitStream<WebSocket>,
     session_sender: broadcast::Sender<WSMessage>,
     notification_sender: mpsc::Sender<Notification>,
     session_id: u32,
     client_id: u32,
     sessions: StreamingSessions,
-) {
+) -> AppResult<()> {
     while let Some(msg) = client_receiver.next().await {
         let Ok(msg) = msg else {
             break;
@@ -330,6 +476,7 @@ async fn receive_client_messages(
         match msg {
             Message::Text(text) => {
                 handle_client_message(
+                    db,
                     &session_sender,
                     &notification_sender,
                     text,
@@ -346,27 +493,36 @@ async fn receive_client_messages(
             Message::Close(_) => break,
         }
     }
+    Ok(())
 }
 
 async fn handle_client_message(
+    // TODO: The send_notification function feels kinda redundant
+    db: &Database,
     session_sender: &broadcast::Sender<WSMessage>,
     notification_sender: &mpsc::Sender<Notification>,
     text: String,
     session_id: u32,
     client_id: u32,
     sessions: &StreamingSessions,
-) -> Result<(), ()> {
+) -> AppResult<()> {
     let Ok(msg) = serde_json::from_str(&text) else {
         debug!("Received malformed json from session websocket: {text}");
-        return Err(());
+        return Err("exited because of malformed json".into());
     };
 
     let Some(session) = sessions.get(&session_id).await else {
-        return Err(());
+        return Err("Session no longer exists".into());
     };
 
-    match &msg {
-        WSMessage::Update { message_type, .. } => 'update_block: {
+    match msg {
+        WSMessage::Update {
+            ref message_type,
+            ref video_time,
+            ref state,
+            ..
+        } => 'update_block: {
+            session.update_timekeeper(*video_time as f64, state).await;
             match message_type {
                 WSMessageType::Pause => session.set_state(SessionState::Paused).await,
                 WSMessageType::Play => session.set_state(SessionState::Playing).await,
@@ -380,9 +536,64 @@ async fn handle_client_message(
             session_sender
                 .send(WSMessage::new_state(session.get_state().await))
                 .log_err_with_msg("an error occured while sending a message to the session");
+
+            let at_greater_than = session.when_to_recommend().await;
+            session_sender
+                .send(WSMessage::RequestNext { at_greater_than })
+                .log_err_with_msg("failed to send message to session");
+
             send_notification(notification_sender, &msg, client_id).await;
         }
-        WSMessage::Notification { .. } => unreachable!(), // Only the server should send this
+        WSMessage::SendNext => {
+            let popup = session.get_popup().await?;
+
+            let msg = WSMessage::Notification {
+                msg: popup,
+                origin: 0,
+            };
+            session_sender
+                .send(msg)
+                .log_err_with_msg("an error occured while sending a message to the session");
+            return Ok(());
+        }
+        WSMessage::SwitchTo { id } => {
+            let path: String = db
+                .get()?
+                .call(move |conn| {
+                    conn.query_row_get("SELECT path FROM data_files WHERE id=?1", [id])
+                        .map_err(Into::into)
+                })
+                .await?;
+
+            let media_context = format::input(&path)?;
+            let total_time = media_context.duration() as f64 / f64::from(ffmpeg::ffi::AV_TIME_BASE);
+
+            if *session.file_path.lock().await == path {
+                return Ok(());
+            }
+
+            *session.video_id.lock().await = id;
+            *session.next_recommended.lock().await = RecommendationPopupState::new(db, id);
+            let mut timekeeper = session.time_estimate.lock().await;
+            *timekeeper = TimeKeeper::new(total_time);
+            drop(timekeeper); // Needs to be dropped, before when_to_recommend is called
+
+            let serve_file = ServeFile::new(&path);
+            session.replace_stream(serve_file, &path).await;
+
+            session_sender
+                .send(WSMessage::Reload)
+                .log_err_with_msg("failed to send to session");
+
+            let at_greater_than = session.when_to_recommend().await;
+            session_sender
+                .send(WSMessage::RequestNext { at_greater_than })
+                .log_err_with_msg("failed to send message to session");
+            return Ok(());
+        }
+        WSMessage::Notification { .. } | WSMessage::RequestNext { .. } | WSMessage::Reload => {
+            unreachable!()
+        } // Only the server should send this
     }
 
     session_sender
@@ -489,16 +700,11 @@ async fn notifier(
 }
 
 fn send_to_session(sender: &broadcast::Sender<WSMessage>, notification: &Notification) {
-    let msg = notification
-        .render()
-        .log_err_with_msg("failed to render notification")
-        .unwrap_or_default();
-
     sender
-        .send(WSMessage::Notification {
-            msg,
-            origin: notification.origin,
-        })
+        .send(WSMessage::new_notification(
+            notification,
+            notification.origin,
+        ))
         .log_err_with_msg("failed to send notification to session");
 }
 
@@ -589,11 +795,4 @@ struct Video {
 
 async fn session(Path(id): Path<u64>) -> impl IntoResponse {
     Video { id }
-}
-
-fn pseudo_random() -> u32 {
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .subsec_nanos()
 }
