@@ -123,6 +123,33 @@ impl Session {
         })
     }
 
+    async fn reuse(&self, db: &Database, video_id: u64) -> AppResult<()> {
+        let file_path: String = db
+            .get()?
+            .call(move |conn| {
+                conn.query_row_get("SELECT path FROM data_files WHERE id=?1", [video_id])
+                    .map_err(Into::into)
+            })
+            .await?;
+
+        if *self.file_path.lock().await == file_path {
+            return Ok(());
+        }
+        *self.video_id.lock().await = video_id;
+        *self.file_path.lock().await = file_path.clone();
+
+        let media_context = format::input(&file_path)?;
+        let total_time = media_context.duration() as f64 / f64::from(ffmpeg::ffi::AV_TIME_BASE);
+
+        *self.time_estimate.lock().await = TimeKeeper::new(total_time);
+        *self.next_recommended.lock().await = RecommendationPopupState::new(db, video_id);
+
+        let serve_file = ServeFile::new(&file_path);
+        self.replace_stream(serve_file, &file_path).await;
+
+        Ok(())
+    }
+
     async fn stream(&self) -> MutexGuard<ServeFile> {
         self.stream.lock().await
     }
@@ -557,29 +584,7 @@ async fn handle_client_message(
             return Ok(());
         }
         WSMessage::SwitchTo { id } => {
-            let path: String = db
-                .get()?
-                .call(move |conn| {
-                    conn.query_row_get("SELECT path FROM data_files WHERE id=?1", [id])
-                        .map_err(Into::into)
-                })
-                .await?;
-
-            let media_context = format::input(&path)?;
-            let total_time = media_context.duration() as f64 / f64::from(ffmpeg::ffi::AV_TIME_BASE);
-
-            if *session.file_path.lock().await == path {
-                return Ok(());
-            }
-
-            *session.video_id.lock().await = id;
-            *session.next_recommended.lock().await = RecommendationPopupState::new(db, id);
-            let mut timekeeper = session.time_estimate.lock().await;
-            *timekeeper = TimeKeeper::new(total_time);
-            drop(timekeeper); // Needs to be dropped, before when_to_recommend is called
-
-            let serve_file = ServeFile::new(&path);
-            session.replace_stream(serve_file, &path).await;
+            session.reuse(db, id).await.log_err();
 
             session_sender
                 .send(WSMessage::Reload)
