@@ -91,7 +91,6 @@ impl Session {
     async fn new(
         db: &Database,
         video_id: u64,
-        stream: ServeFile,
         notification_sender: mpsc::Sender<Notification>,
         websocket_sender: broadcast::Sender<WSMessage>,
     ) -> AppResult<Self> {
@@ -102,6 +101,8 @@ impl Session {
                     .map_err(Into::into)
             })
             .await?;
+
+        let stream = ServeFile::new(&file_path);
 
         let media_context = format::input(&file_path)?;
         let total_time = media_context.duration() as f64 / f64::from(ffmpeg::ffi::AV_TIME_BASE);
@@ -239,7 +240,7 @@ impl RecommendationPopupState {
         }
     }
 
-    // I think this currently does all the work in this one await call, but it is supposed to be computed in the background, works for now
+    // I think this currently does all the work in this one await call, but it is supposed to be computed in the background, works for now, hold the joinhandle instead?
     async fn get_popup(&mut self) -> AppResult<String> {
         match self.inner {
             Store::Future(ref mut f) => {
@@ -347,25 +348,16 @@ async fn new_session(
 ) -> AppResult<impl IntoResponse> {
     let random = pseudo_random();
 
-    let conn = db.get()?;
-
-    let path: String = conn
-        .call(move |conn| {
-            conn.query_row_get("SELECT path FROM data_files WHERE id=?1", [id])
-                .map_err(Into::into)
-        })
-        .await?;
-
-    let serve_file = ServeFile::new(path);
-
     let (websocket_sender, _) = broadcast::channel(32);
     let (notification_sender, notification_receiver) = mpsc::channel(32);
     tokio::spawn(notifier(notification_receiver, websocket_sender.clone()));
 
-    let session = Session::new(&db, id, serve_file, notification_sender, websocket_sender).await?;
+    let session = Session::new(&db, id, notification_sender, websocket_sender).await?;
     sessions.insert(random, session).await;
 
-    Ok(Redirect::temporary(&format!("/video/session/{random}")))
+    Ok(Redirect::temporary(&format!(
+        "/?all=/video/session/{random}"
+    )))
 }
 
 async fn ws_session(

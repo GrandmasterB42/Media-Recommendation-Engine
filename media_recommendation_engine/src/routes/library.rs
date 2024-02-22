@@ -12,7 +12,7 @@ use crate::{
     database::{Database, QueryRowGetConnExt, QueryRowIntoConnExt, QueryRowIntoStmtExt},
     routes::HXTarget,
     state::{AppResult, AppState},
-    utils::frontend_redirect,
+    utils::{frontend_redirect, frontend_redirect_explicit},
 };
 
 use super::StreamingSessions;
@@ -165,7 +165,7 @@ async fn top_preview(conn: Database, id: u64, prev: Preview) -> AppResult<LargeI
                         let video_id = resolve_video(conn, video_id, reference_flag)?;
                         Ok((
                             title,
-                            frontend_redirect(&format!("/video/{video_id}"), HXTarget::All),
+                            frontend_redirect_explicit(&format!("/video/{video_id}"), HXTarget::All, None),
                         ))
                     }
                     Preview::Series => Ok((
@@ -192,7 +192,7 @@ async fn top_preview(conn: Database, id: u64, prev: Preview) -> AppResult<LargeI
 
                         Ok((
                             title,
-                            frontend_redirect(&format!("/video/{video_id}"), HXTarget::All),
+                            frontend_redirect_explicit(&format!("/video/{video_id}"), HXTarget::All, None),
                         ))
                     }
                 }
@@ -241,9 +241,10 @@ async fn preview_categories(
                                 Ok(GridElement {
                                     title,
                                     redirect_entire: String::new(),
-                                    redirect_img: frontend_redirect(
+                                    redirect_img: frontend_redirect_explicit(
                                         &format!("/video/{video_id}"),
                                         HXTarget::All,
+                                        None,
                                     ),
                                     redirect_title: frontend_redirect(
                                         &format!("/preview/Movie/{id}"),
@@ -323,9 +324,10 @@ async fn preview_categories(
                     GridElement {
                         title: name,
                         redirect_entire: String::new(),
-                        redirect_img: frontend_redirect(
+                        redirect_img: frontend_redirect_explicit(
                             &format!("/video/{videoid}"),
                             HXTarget::All,
+                            None,
                         ),
                         redirect_title: frontend_redirect(
                             &format!("/preview/Episode/{id}"),

@@ -15,6 +15,7 @@ pub enum Location {
     All { all: String },
 }
 
+#[derive(Clone, Copy)]
 pub enum HXTarget {
     All,
     Content,
@@ -74,7 +75,7 @@ pub async fn homepage(location: Option<Query<Location>>) -> AppResult<Index> {
         match location {
             Location::Err { err } => Error {
                 err: &err,
-                redirect: &frontend_redirect_explicit("/", &HXTarget::All, "/"),
+                redirect: &frontend_redirect_explicit("/", HXTarget::All, Some("/")),
             }
             .render(),
             Location::Content { content } => {

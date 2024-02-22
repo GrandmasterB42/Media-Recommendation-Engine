@@ -8,16 +8,25 @@ use super::relative;
 pub fn frontend_redirect(route: &str, target: HXTarget) -> String {
     frontend_redirect_explicit(
         route,
-        &target,
-        &format!(r#"/?{target}={route}"#, target = target.as_str()),
+        target,
+        Some(&format!(r#"/?{target}={route}"#, target = target.as_str())),
     )
 }
 
-pub fn frontend_redirect_explicit(route: &str, target: &HXTarget, push_url: &str) -> String {
-    format!(
-        r#"hx-get="{route}" hx-target={target} hx-push-url="{push_url}""#,
-        target = target.as_target()
-    )
+pub fn frontend_redirect_explicit(route: &str, target: HXTarget, push_url: Option<&str>) -> String {
+    match push_url {
+        Some(push_url) => format!(
+            r#"hx-get="{route}" hx-target={target} hx-push-url="{push_url}""#,
+            route = route,
+            target = target.as_target(),
+            push_url = push_url
+        ),
+        None => format!(
+            r#"hx-get="{route}" hx-target={target}"#,
+            route = route,
+            target = target.as_target()
+        ),
+    }
 }
 
 pub fn htmx() -> Router<AppState> {
