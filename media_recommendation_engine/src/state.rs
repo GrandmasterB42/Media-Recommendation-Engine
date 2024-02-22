@@ -74,7 +74,10 @@ impl From<rusqlite::Error> for AppError {
 
 impl From<tokio_rusqlite::Error> for AppError {
     fn from(e: tokio_rusqlite::Error) -> Self {
-        AppError::DatabaseAsync(e)
+        match e {
+            tokio_rusqlite::Error::Rusqlite(re) => AppError::Database(re),
+            _ => AppError::DatabaseAsync(e),
+        }
     }
 }
 
