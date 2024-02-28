@@ -2,22 +2,16 @@
 
 extern crate ffmpeg_next as ffmpeg;
 
-use axum::{
-    http::{HeaderName, HeaderValue},
-    response::Redirect,
-    routing::get,
-    Router,
-};
+use axum::{response::Redirect, routing::get, Router};
 
 use tokio::net::TcpListener;
-use tower::ServiceBuilder;
-use tower_http::{services::ServeDir, set_header::SetResponseHeaderLayer};
 
 use tracing::info;
 
 use crate::{
     database::Database,
     indexing::periodic_indexing,
+    routes::dynamic_content,
     state::AppState,
     utils::{htmx, init_tracing, tracing_layer, Ignore},
 };
@@ -96,32 +90,4 @@ async fn main() {
         _ = tokio::signal::ctrl_c() => {},
     }
     info!("Suceessfully shut down");
-}
-
-fn dynamic_content() -> Router<AppState> {
-    let styles = ServiceBuilder::new()
-        .layer(SetResponseHeaderLayer::overriding(
-            HeaderName::from_static("content-type"),
-            HeaderValue::from_static("text/css; charset=UTF-8"),
-        ))
-        .service(ServeDir::new("frontend/styles"));
-
-    let scripts = ServiceBuilder::new()
-        .layer(SetResponseHeaderLayer::overriding(
-            HeaderName::from_static("content-type"),
-            HeaderValue::from_static("application/javascript; charset=UTF-8"),
-        ))
-        .service(ServeDir::new("frontend/scripts"));
-
-    let icons = ServiceBuilder::new()
-        .layer(SetResponseHeaderLayer::overriding(
-            HeaderName::from_static("content-type"),
-            HeaderValue::from_static("image/svg+xml; charset=UTF-8"),
-        ))
-        .service(ServeDir::new("frontend/icons"));
-
-    Router::new()
-        .nest_service("/styles", styles)
-        .nest_service("/scripts", scripts)
-        .nest_service("/icons", icons)
 }
