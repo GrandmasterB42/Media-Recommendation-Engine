@@ -27,15 +27,13 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: nightly
-          profile: minimal
           components: clippy
-          override: true
       - name: Install Dependencies
         run: sudo apt-get update; sudo apt-get install pkg-config libx11-dev libasound2-dev libudev-dev
       - name: Run clippy
         uses: clechasseur/rs-clippy-check@v3
         with:
-          args: --all-features
+          args: -- -D warnings
 
   # Run cargo fmt --all -- --check
   format:
@@ -48,9 +46,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: nightly
-          profile: minimal
           components: rustfmt
-          override: true
       - name: Run cargo fmt
         uses: actions-rs/cargo@v1
         with:
