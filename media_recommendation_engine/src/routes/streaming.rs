@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc, Mutex, MutexGuard};
 use tower::Service;
 use tower_http::services::ServeFile;
-use tracing::debug;
+use tracing::{debug, error};
 
 use crate::{
     database::{Database, QueryRowGetConnExt},
@@ -66,7 +66,15 @@ impl StreamingSessions {
     }
 
     async fn insert(&mut self, id: u32, session: Session) {
-        self.sessions.lock().await.insert(id, Arc::new(session));
+        if self
+            .sessions
+            .lock()
+            .await
+            .insert(id, Arc::new(session))
+            .is_some()
+        {
+            error!("A duplicate session was inserted!");
+        };
     }
 
     async fn remove(&mut self, id: &u32) {
@@ -346,7 +354,12 @@ async fn new_session(
     State(mut sessions): State<StreamingSessions>,
     State(db): State<Database>,
 ) -> AppResult<impl IntoResponse> {
-    let random = pseudo_random();
+    let random = loop {
+        let random = pseudo_random();
+        if sessions.get(&random).await.is_none() {
+            break random;
+        }
+    };
 
     let (websocket_sender, _) = broadcast::channel(32);
     let (notification_sender, notification_receiver) = mpsc::channel(32);
