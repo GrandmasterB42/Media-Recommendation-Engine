@@ -12,7 +12,7 @@
         <label for="radioSet" {{redirect_settings|safe}}> Settings </label>
     </div>
     <div class="logout_container">
-        <input id="logout" class="hidden" type="button" title="logout">
+        <input id="logout" class="hidden" type="button" title="logout" hx-get="/auth/logout">
         <label id="logout-label" for="logout"> Logout </label>
     </div>
 </div>

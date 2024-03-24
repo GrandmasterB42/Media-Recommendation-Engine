@@ -1,0 +1,23 @@
+<div>
+    <link href="/styles/login.css" rel="stylesheet" />
+    <div class="login_container">
+        <form action="{{post_url}}" method="post">
+            <div class="login_heading"> {{title}} </div>
+            <div class="login_input">
+                <input type="text" name="username" placeholder="Username" required>
+            </div>
+            <div class="login_input">
+                <input type="password" name="password" placeholder="Password" required>
+            </div>
+            <div class="login_input">
+                <button type="submit">Login</button>
+            </div>
+        </form>
+        {% if let Some(sub_text) = sub_text %}
+        <div class="login_subtext"> {{sub_text|safe}} </div>
+        {% endif %}
+    </div>
+    {% if let Some(message) = message %}
+    <div class="message"> {{message}} </div>
+    {% endif %}
+</div>

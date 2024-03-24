@@ -1,4 +1,7 @@
-use std::ops::Deref;
+use std::{
+    fmt::{self, Formatter},
+    ops::Deref,
+};
 
 use r2d2::{ManageConnection, Pool};
 use tokio::runtime::{Handle, Runtime};
@@ -80,6 +83,12 @@ impl Deref for Database {
     }
 }
 
+impl fmt::Debug for Database {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Database").finish()
+    }
+}
+
 async fn db_init(conn: &Connection) -> AppResult<()> {
     conn.call(|conn| {
         {
@@ -113,25 +122,35 @@ async fn db_init(conn: &Connection) -> AppResult<()> {
 
 type Mapfn<T> = for<'a, 'b> fn(&'a rusqlite::Row<'b>) -> Result<T, rusqlite::Error>;
 
-pub trait QueryRowIntoStmtExt<T> {
-    fn query_row_into<P: rusqlite::Params>(&mut self, params: P) -> Result<T, rusqlite::Error>;
-    fn query_map_into<P: rusqlite::Params>(
+pub trait QueryRowIntoStmtExt<P>
+where
+    P: rusqlite::Params,
+{
+    fn query_row_into<T: for<'a> TryFrom<&'a rusqlite::Row<'a>, Error = rusqlite::Error>>(
+        &mut self,
+        params: P,
+    ) -> Result<T, rusqlite::Error>;
+
+    fn query_map_into<T: for<'a> TryFrom<&'a rusqlite::Row<'a>, Error = rusqlite::Error>>(
         &mut self,
         params: P,
     ) -> Result<rusqlite::MappedRows<'_, Mapfn<T>>, rusqlite::Error>;
 }
 
-impl<T> QueryRowIntoStmtExt<T> for rusqlite::Statement<'_>
+impl<P> QueryRowIntoStmtExt<P> for rusqlite::Statement<'_>
 where
-    T: for<'a> TryFrom<&'a rusqlite::Row<'a>, Error = rusqlite::Error>,
+    P: rusqlite::Params,
 {
     /// Executes the prepared statement and tries to convert the first row into the provided type
-    fn query_row_into<P: rusqlite::Params>(&mut self, params: P) -> Result<T, rusqlite::Error> {
+    fn query_row_into<T: for<'a> TryFrom<&'a rusqlite::Row<'a>, Error = rusqlite::Error>>(
+        &mut self,
+        params: P,
+    ) -> Result<T, rusqlite::Error> {
         self.query_row(params, |row| row.try_into())
     }
 
     // Executes the prepared statement and tries to convert each row into the provided type
-    fn query_map_into<P: rusqlite::Params>(
+    fn query_map_into<T: for<'a> TryFrom<&'a rusqlite::Row<'a>, Error = rusqlite::Error>>(
         &mut self,
         params: P,
     ) -> Result<rusqlite::MappedRows<'_, Mapfn<T>>, rusqlite::Error> {
@@ -146,20 +165,23 @@ where
     }
 }
 
-pub trait QueryRowIntoConnExt<T> {
-    fn query_row_into<P: rusqlite::Params>(
+pub trait QueryRowIntoConnExt<P>
+where
+    P: rusqlite::Params,
+{
+    fn query_row_into<T: for<'a> TryFrom<&'a rusqlite::Row<'a>, Error = rusqlite::Error>>(
         &self,
         sql: &str,
         params: P,
     ) -> Result<T, rusqlite::Error>;
 }
 
-impl<T> QueryRowIntoConnExt<T> for rusqlite::Connection
+impl<P> QueryRowIntoConnExt<P> for rusqlite::Connection
 where
-    T: for<'a> TryFrom<&'a rusqlite::Row<'a>, Error = rusqlite::Error>,
+    P: rusqlite::Params,
 {
     /// Executes the provided sql and tries to convert the first row into the provided type
-    fn query_row_into<P: rusqlite::Params>(
+    fn query_row_into<T: for<'a> TryFrom<&'a rusqlite::Row<'a>, Error = rusqlite::Error>>(
         &self,
         sql: &str,
         params: P,
@@ -168,25 +190,34 @@ where
     }
 }
 
-pub trait QueryRowGetStmtExt<T> {
-    fn query_row_get<P: rusqlite::Params>(&mut self, params: P) -> Result<T, rusqlite::Error>;
-    fn query_map_get<P: rusqlite::Params>(
+pub trait QueryRowGetStmtExt<P>
+where
+    P: rusqlite::Params,
+{
+    fn query_row_get<T: rusqlite::types::FromSql>(
+        &mut self,
+        params: P,
+    ) -> Result<T, rusqlite::Error>;
+    fn query_map_get<T: rusqlite::types::FromSql>(
         &mut self,
         params: P,
     ) -> Result<rusqlite::MappedRows<'_, Mapfn<T>>, rusqlite::Error>;
 }
 
-impl<T> QueryRowGetStmtExt<T> for rusqlite::Statement<'_>
+impl<P> QueryRowGetStmtExt<P> for rusqlite::Statement<'_>
 where
-    T: rusqlite::types::FromSql,
+    P: rusqlite::Params,
 {
     /// Executes the prepared statement and gets the first column of the first row
-    fn query_row_get<P: rusqlite::Params>(&mut self, params: P) -> Result<T, rusqlite::Error> {
+    fn query_row_get<T: rusqlite::types::FromSql>(
+        &mut self,
+        params: P,
+    ) -> Result<T, rusqlite::Error> {
         self.query_row(params, |row| row.get(0))
     }
 
     /// Executes the prepared statement and gets the first column of each row
-    fn query_map_get<P: rusqlite::Params>(
+    fn query_map_get<T: rusqlite::types::FromSql>(
         &mut self,
         params: P,
     ) -> Result<rusqlite::MappedRows<'_, Mapfn<T>>, rusqlite::Error> {
@@ -201,20 +232,23 @@ where
     }
 }
 
-pub trait QueryRowGetConnExt<T> {
-    fn query_row_get<P: rusqlite::Params>(
+pub trait QueryRowGetConnExt<P>
+where
+    P: rusqlite::Params,
+{
+    fn query_row_get<T: rusqlite::types::FromSql>(
         &self,
         sql: &str,
         params: P,
     ) -> Result<T, rusqlite::Error>;
 }
 
-impl<T> QueryRowGetConnExt<T> for rusqlite::Connection
+impl<P> QueryRowGetConnExt<P> for rusqlite::Connection
 where
-    T: rusqlite::types::FromSql,
+    P: rusqlite::Params,
 {
     /// Executes the provided sql and gets the first column of the first row
-    fn query_row_get<P: rusqlite::Params>(
+    fn query_row_get<T: rusqlite::types::FromSql>(
         &self,
         sql: &str,
         params: P,

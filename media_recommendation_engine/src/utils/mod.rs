@@ -12,6 +12,9 @@ pub use tracing::{init_tracing, tracing_layer};
 mod frontend;
 pub use frontend::{frontend_redirect, frontend_redirect_explicit, htmx};
 
+pub mod auth;
+pub use auth::{AuthSession, Credentials};
+
 macro_rules! relative {
     ($path:expr) => {
         if cfg!(windows) {

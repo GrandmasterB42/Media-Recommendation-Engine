@@ -4,16 +4,23 @@ extern crate ffmpeg_next as ffmpeg;
 
 use axum::{response::Redirect, routing::get, Router};
 
+use axum_login::{
+    login_required,
+    tower_sessions::{session_store::ExpiredDeletion, Expiry, SessionManagerLayer},
+    AuthManagerLayerBuilder,
+};
+use time::Duration;
 use tokio::net::TcpListener;
 
-use tracing::info;
+use tower_sessions::cookie::Key;
+use tracing::{info, warn};
 
 use crate::{
     database::Database,
     indexing::periodic_indexing,
     routes::dynamic_content,
     state::AppState,
-    utils::{htmx, init_tracing, tracing_layer, Ignore},
+    utils::{htmx, init_tracing, tracing_layer, HandleErr},
 };
 
 #[macro_use]
@@ -31,26 +38,52 @@ async fn main() {
 
     let args = std::env::args().collect::<Vec<_>>();
     if args.get(1).is_some_and(|a| a == "delete_db") {
-        std::fs::remove_file("database/database.sqlite").ignore();
-        std::fs::remove_file("database/database.sqlite-journal").ignore();
+        std::fs::remove_file("database/database.sqlite")
+            .log_warn_with_msg("failed to delete database");
+        std::fs::remove_file("database/database.sqlite-journal")
+            .log_warn_with_msg("failed to delete journal");
+        std::fs::remove_file("database/database.sqlite-wal")
+            .log_warn_with_msg("failed to delete wal");
+        std::fs::remove_file("database/database.sqlite-shm")
+            .log_warn_with_msg("failed to delete shm");
+    } else if args.len() > 1 {
+        let args = &args[1..];
+        warn!("provided invalid arguments: \"{args:?}\"")
     }
 
     let db = Database::new()
         .await
         .expect("failed to connect to database");
 
+    let session_store = db.clone();
+
+    tokio::task::spawn(
+        session_store
+            .clone()
+            .continuously_delete_expired(tokio::time::Duration::from_secs(60)),
+    );
+
+    let session_layer = SessionManagerLayer::new(session_store.clone())
+        .with_secure(false)
+        .with_expiry(Expiry::OnInactivity(Duration::days(1)))
+        .with_signed(Key::generate());
+
+    let auth = AuthManagerLayerBuilder::new(session_store, session_layer).build();
+
     let app = Router::new()
         .merge(tracing_layer())
-        .merge(htmx())
-        .merge(dynamic_content())
-        .fallback(Redirect::permanent("/?err=404"))
         .route("/", get(routes::homepage))
         .merge(routes::library())
         .route("/explore", get(routes::explore))
-        // TODO: The Menu bar up top isn't great, settings and logout should probably be in a dropdown to the right and clicking on library again should bring yopu back to the start of the library
         .route("/settings", get(|| async move { "" }))
         .nest("/video", routes::streaming())
-        .with_state(AppState::new(db.clone()));
+        .layer(login_required!(Database, login_url = "/auth/login"))
+        .merge(htmx())
+        .merge(dynamic_content())
+        .nest("/auth", routes::login())
+        .fallback(Redirect::permanent("/?err=404"))
+        .with_state(AppState::new(db.clone()))
+        .layer(auth);
 
     let ip = "0.0.0.0:3000";
 

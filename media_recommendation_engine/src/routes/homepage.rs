@@ -1,4 +1,5 @@
 use askama::Template;
+use askama_axum::IntoResponse;
 use axum::{debug_handler, extract::Query};
 use serde::Deserialize;
 
@@ -40,8 +41,8 @@ impl HXTarget {
 #[derive(Template)]
 #[template(path = "../frontend/content/index.html")]
 pub struct Index {
-    body: String,
-    all: String,
+    pub body: String,
+    pub all: String,
 }
 
 #[derive(Template)]
@@ -62,7 +63,7 @@ struct Error<'a> {
 }
 
 #[debug_handler]
-pub async fn homepage(location: Option<Query<Location>>) -> AppResult<Index> {
+pub async fn homepage(location: Option<Query<Location>>) -> AppResult<impl IntoResponse> {
     let mut body_html = Homepage {
         redirect_library: &frontend_redirect("/library", HXTarget::Content),
         redirect_explore: &frontend_redirect("/explore", HXTarget::Content),
@@ -95,5 +96,6 @@ pub async fn homepage(location: Option<Query<Location>>) -> AppResult<Index> {
     Ok(Index {
         body,
         all: HXTarget::All.as_str().to_owned(),
-    })
+    }
+    .into_response())
 }
