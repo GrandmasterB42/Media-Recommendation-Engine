@@ -10,7 +10,7 @@ use tracing::info;
 
 use crate::{
     state::{AppError, AppResult},
-    utils::HandleErr,
+    utils::{ConvertErr, HandleErr},
 };
 
 pub struct ConnectionManager;
@@ -117,7 +117,7 @@ async fn db_init(conn: &Connection) -> AppResult<()> {
         Ok(())
     })
     .await
-    .map_err(Into::into)
+    .convert_err()
 }
 
 type Mapfn<T> = for<'a, 'b> fn(&'a rusqlite::Row<'b>) -> Result<T, rusqlite::Error>;

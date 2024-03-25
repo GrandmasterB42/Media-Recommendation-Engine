@@ -12,7 +12,7 @@ use crate::{
     database::{Database, QueryRowGetConnExt, QueryRowIntoConnExt, QueryRowIntoStmtExt},
     routes::HXTarget,
     state::{AppResult, AppState},
-    utils::{frontend_redirect, frontend_redirect_explicit},
+    utils::{frontend_redirect, frontend_redirect_explicit, ConvertErr},
 };
 
 use super::StreamingSessions;
@@ -79,7 +79,7 @@ async fn get_sessions(State(sessions): State<StreamingSessions>) -> AppResult<im
         .iter()
         .map(|el| el.render())
         .collect::<Result<String, _>>()
-        .map_err(Into::into)
+        .convert_err()
 }
 
 async fn render_sessions(sessions: StreamingSessions) -> Vec<GridElement> {
@@ -352,10 +352,10 @@ fn resolve_video(
     reference_flag: u64,
 ) -> Result<u64, rusqlite::Error> {
     if reference_flag == 1 {
-        Ok(conn.query_row_get(
+        conn.query_row_get(
             "SELECT videoid FROM multipart WHERE id = ?1 AND part = 1",
             [video_id],
-        )?)
+        )
     } else {
         Ok(video_id)
     }

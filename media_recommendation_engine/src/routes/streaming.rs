@@ -35,7 +35,7 @@ use crate::{
     database::{Database, QueryRowGetConnExt},
     recommendor::RecommendationPopup,
     state::{AppResult, AppState},
-    utils::{pseudo_random, HandleErr},
+    utils::{pseudo_random, ConvertErr, HandleErr},
 };
 
 #[derive(Clone)]
@@ -106,7 +106,7 @@ impl Session {
             .get()?
             .call(move |conn| {
                 conn.query_row_get("SELECT path FROM data_files WHERE id=?1", [video_id])
-                    .map_err(Into::into)
+                    .convert_err()
             })
             .await?;
 
@@ -137,7 +137,7 @@ impl Session {
             .get()?
             .call(move |conn| {
                 conn.query_row_get("SELECT path FROM data_files WHERE id=?1", [video_id])
-                    .map_err(Into::into)
+                    .convert_err()
             })
             .await?;
 

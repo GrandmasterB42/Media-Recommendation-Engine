@@ -12,7 +12,7 @@ use serde::Deserialize;
 use crate::{
     database::{Database, QueryRowGetConnExt},
     state::{AppError, AppResult, AppState},
-    utils::{AuthSession, Credentials, HandleErr},
+    utils::{AuthSession, ConvertErr, Credentials, HandleErr},
 };
 
 use super::homepage::Index;
@@ -40,11 +40,18 @@ struct Message {
     message: Option<String>,
 }
 
-async fn login_page(Query(message): Query<Message>) -> AppResult<impl IntoResponse> {
+async fn login_page(
+    Query(message): Query<Message>,
+    State(db): State<Database>,
+) -> AppResult<impl IntoResponse> {
     let login_page = LoginPage {
         title: "Login",
         post_url: "/auth/login/submit",
-        sub_text: Some(r#"<a href="/auth/register"> Register here! </a>"#),
+        sub_text: if is_noonne_registered(db).await? {
+            Some(r#"<a href="/auth/register"> Register here! </a>"#)
+        } else {
+            None
+        },
         message: message.message,
     };
     let body = login_page.render()?;
@@ -97,26 +104,17 @@ async fn register_form(
 ) -> AppResult<impl IntoResponse> {
     let conn = db.get()?;
 
-    // Query that returns true if the users table is empty
-    let is_empty = conn
-        .call(|conn| {
-            Ok(conn
-                .query_row_get("SELECT COUNT(*) FROM users", [])
-                .map(|count: i64| count == 0)
-                .unwrap_or(false))
-        })
-        .await?;
-
-    if is_empty {
+    if is_noonne_registered(db).await? {
         let password = tokio::task::spawn_blocking(|| password_auth::generate_hash(creds.password))
             .await
             .map_err(|e| AppError::Custom(e.to_string()))?;
 
         conn.call(|conn| {
-            Ok(conn.execute(
+            conn.execute(
                 "INSERT INTO users (username, password) VALUES (?, ?)",
                 [creds.username, password],
-            )?)
+            )
+            .convert_err()
         })
         .await?;
     } else {
@@ -127,4 +125,16 @@ async fn register_form(
     }
 
     Ok(Redirect::to("/auth/login").into_response())
+}
+
+async fn is_noonne_registered(db: Database) -> AppResult<bool> {
+    let conn = db.get()?;
+    conn.call(|conn| {
+        Ok(conn
+            .query_row_get("SELECT COUNT(*) FROM users", [])
+            .map(|count: i64| count == 0)
+            .unwrap_or(false))
+    })
+    .await
+    .convert_err()
 }

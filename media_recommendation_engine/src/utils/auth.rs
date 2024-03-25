@@ -17,6 +17,8 @@ use crate::{
     state::AppError,
 };
 
+use super::ConvertErr;
+
 pub type AuthSession = axum_login::AuthSession<Database>;
 
 #[derive(Clone)]
@@ -122,19 +124,18 @@ impl AuthnBackend for Database {
         &self,
         creds: Self::Credentials,
     ) -> Result<Option<Self::User>, Self::Error> {
-        let conn = self.get().map_err(AppError::from)?;
+        let conn = self.get()?;
 
         let user = conn
             .call(move |conn| {
-                Ok(conn
-                    .query_row_into::<User>(
-                        "SELECT id, username, password FROM users WHERE username = ?1",
-                        [creds.username],
-                    )
-                    .optional()?)
+                conn.query_row_into::<User>(
+                    "SELECT id, username, password FROM users WHERE username = ?1",
+                    [creds.username],
+                )
+                .optional()
+                .convert_err()
             })
-            .await
-            .map_err(AppError::from)?;
+            .await?;
 
         tokio::task::spawn_blocking(|| {
             Ok(user.filter(|user| {
@@ -146,20 +147,19 @@ impl AuthnBackend for Database {
     }
 
     async fn get_user(&self, id: &UserId<Self>) -> Result<Option<Self::User>, Self::Error> {
-        let conn = self.get().map_err(AppError::from)?;
+        let conn = self.get()?;
 
         let id = *id;
         let user = conn
             .call(move |conn| {
-                Ok(conn
-                    .query_row_into::<User>(
-                        "SELECT id, username, password FROM users WHERE id = ?1",
-                        [id],
-                    )
-                    .optional()?)
+                conn.query_row_into::<User>(
+                    "SELECT id, username, password FROM users WHERE id = ?1",
+                    [id],
+                )
+                .optional()
+                .convert_err()
             })
-            .await
-            .map_err(AppError::from)?;
+            .await?;
 
         Ok(user)
     }
@@ -192,14 +192,12 @@ impl AuthzBackend for Database {
             let permissions = conn.prepare(
                 "SELECT DISTINCT permissions.name FROM users, permission, user_permissions WHERE users.id = ?1 AND users.id = user_permissions.userid AND user_permissions.permissionid = permissions.id",
             )?
-                .query_map_into([user.id])
-                .map_err(tokio_rusqlite::Error::Rusqlite)?
+                .query_map_into([user.id])?
                 .collect::<Result<HashSet<_>, _>>()?;
-
             Ok(permissions)
         })
         .await
-        .map_err(AppError::from)
+        .convert_err()
     }
 
     async fn get_group_permissions(
@@ -212,14 +210,12 @@ impl AuthzBackend for Database {
             let permissions = conn.prepare(
                 "SELECT DISTINCT permissions.name FROM users, groups, permission, user_groups, group_permissions WHERE users.id = ?1 AND users.id = user_groups.userid AND user_groups.groupid = groups.id AND groups.id = group_permissions.groupid AND group_permissions.permissionid = permissions.id"
             )?
-                .query_map_into([user.id])
-                .map_err(tokio_rusqlite::Error::Rusqlite)?
+                .query_map_into([user.id])?
                 .collect::<Result<HashSet<_>, _>>()?;
-
             Ok(permissions)
         })
         .await
-        .map_err(AppError::from)
+        .convert_err()
     }
 }
 
@@ -244,25 +240,26 @@ fn save_with_conn(
 #[async_trait]
 impl SessionStore for Database {
     async fn create(&self, record: &mut Record) -> session_store::Result<()> {
-        let conn = self.get().map_err(SessionStoreError::from)?;
+        let conn = self.get().convert_err::<SessionStoreError>()?;
 
         record.id = {
             let mut record = record.clone();
 
             while {
                 conn.call(move |conn| {
-                    Ok(conn.query_row_get::<bool>(
+                    conn.query_row_get::<bool>(
                         "SELECT exists(SELECT 1 FROM session_store WHERE id = ?1)",
                         [record.id.to_string()],
-                    )?)
+                    )
+                    .convert_err()
                 })
                 .await
-                .map_err(SessionStoreError::from)?
+                .convert_err::<SessionStoreError>()?
             } {
                 record.id = Id::default();
             }
 
-            let record_data = rmp_serde::to_vec(&record).map_err(SessionStoreError::from)?;
+            let record_data = rmp_serde::to_vec(&record).convert_err::<SessionStoreError>()?;
             conn.call(move |conn| {
                 Ok(save_with_conn(
                     conn,
@@ -272,7 +269,7 @@ impl SessionStore for Database {
                 )?)
             })
             .await
-            .map_err(SessionStoreError::from)?;
+            .convert_err::<SessionStoreError>()?;
 
             record.id
         };
@@ -281,10 +278,10 @@ impl SessionStore for Database {
     }
 
     async fn save(&self, record: &Record) -> session_store::Result<()> {
-        let conn = self.get().map_err(SessionStoreError::from)?;
+        let conn = self.get().convert_err::<SessionStoreError>()?;
 
         let record = record.clone();
-        let record_data = rmp_serde::to_vec(&record).map_err(SessionStoreError::from)?;
+        let record_data = rmp_serde::to_vec(&record).convert_err::<SessionStoreError>()?;
         conn.call(move |conn| {
             Ok(save_with_conn(
                 conn,
@@ -294,52 +291,52 @@ impl SessionStore for Database {
             )?)
         })
         .await
-        .map_err(SessionStoreError::from)?;
+        .convert_err::<SessionStoreError>()?;
 
         Ok(())
     }
 
     async fn load(&self, session_id: &Id) -> session_store::Result<Option<Record>> {
-        let conn = self.get().map_err(SessionStoreError::from)?;
+        let conn = self.get().convert_err::<SessionStoreError>()?;
 
         let session_id = *session_id;
         let data = conn
             .call(move |conn| {
-                Ok(conn
-                    .query_row_get::<Vec<u8>>(
-                        "SELECT data FROM session_store WHERE id = ?1 and expiry_date > ?2",
-                        params![
-                            session_id.to_string(),
-                            OffsetDateTime::now_utc().unix_timestamp()
-                        ],
-                    )
-                    .optional()?)
+                conn.query_row_get::<Vec<u8>>(
+                    "SELECT data FROM session_store WHERE id = ?1 and expiry_date > ?2",
+                    params![
+                        session_id.to_string(),
+                        OffsetDateTime::now_utc().unix_timestamp()
+                    ],
+                )
+                .optional()
+                .convert_err()
             })
             .await
-            .map_err(SessionStoreError::from)?;
+            .convert_err::<SessionStoreError>()?;
 
         match data {
-            Some(data) => {
-                let record: Record =
-                    rmp_serde::from_slice(&data).map_err(SessionStoreError::from)?;
-                Ok(Some(record))
-            }
+            Some(data) => rmp_serde::from_slice::<Record>(&data)
+                .map(Some)
+                .convert_err::<SessionStoreError>()
+                .map_err(|e| e.0),
             None => Ok(None),
         }
     }
 
     async fn delete(&self, session_id: &Id) -> session_store::Result<()> {
-        let conn = self.get().map_err(SessionStoreError::from)?;
+        let conn = self.get().convert_err::<SessionStoreError>()?;
 
         let session_id = *session_id;
         conn.call(move |conn| {
-            Ok(conn.execute(
+            conn.execute(
                 "DELETE FROM session_store WHERE id = ?1",
                 [session_id.to_string()],
-            )?)
+            )
+            .convert_err()
         })
         .await
-        .map_err(SessionStoreError::from)?;
+        .convert_err::<SessionStoreError>()?;
 
         Ok(())
     }
@@ -348,16 +345,17 @@ impl SessionStore for Database {
 #[async_trait]
 impl ExpiredDeletion for Database {
     async fn delete_expired(&self) -> session_store::Result<()> {
-        let conn = self.get().map_err(SessionStoreError::from)?;
+        let conn = self.get().convert_err::<SessionStoreError>()?;
 
         conn.call(move |conn| {
-            Ok(conn.execute(
+            conn.execute(
                 "DELETE FROM session_store WHERE expiry_date < ?1",
                 [OffsetDateTime::now_utc().unix_timestamp()],
-            )?)
+            )
+            .convert_err()
         })
         .await
-        .map_err(SessionStoreError::from)?;
+        .convert_err::<SessionStoreError>()?;
 
         Ok(())
     }

@@ -1,7 +1,7 @@
 use std::time::SystemTime;
 
 mod errorext;
-pub use errorext::{HandleErr, Ignore};
+pub use errorext::{ConvertErr, HandleErr, Ignore};
 
 mod parsing;
 pub use parsing::{ParseBetween, ParseUntil};

@@ -69,3 +69,14 @@ pub trait Ignore {
 impl<T: Sized> Ignore for T {
     fn ignore(self) {}
 }
+
+pub trait ConvertErr<T, F> {
+    fn convert_err<E: From<F>>(self) -> Result<T, E>;
+}
+
+impl<T, F> ConvertErr<T, F> for Result<T, F> {
+    #[inline]
+    fn convert_err<E: From<F>>(self) -> Result<T, E> {
+        self.map_err(Into::into)
+    }
+}
