@@ -144,8 +144,9 @@ impl Session {
         if *self.file_path.lock().await == file_path {
             return Ok(());
         }
+
         *self.video_id.lock().await = video_id;
-        *self.file_path.lock().await = file_path.clone();
+        self.file_path.lock().await.clone_from(&file_path);
 
         let media_context = format::input(&file_path)?;
         let total_time = media_context.duration() as f64 / f64::from(ffmpeg::ffi::AV_TIME_BASE);
@@ -165,7 +166,7 @@ impl Session {
 
     async fn replace_stream(&self, stream: ServeFile, path: &str) {
         *self.stream.lock().await = stream;
-        *self.file_path.lock().await = path.to_owned();
+        path.clone_into(&mut (self.file_path.lock().await.to_string()));
     }
 
     async fn add_receiver(&self, id: u32) {
