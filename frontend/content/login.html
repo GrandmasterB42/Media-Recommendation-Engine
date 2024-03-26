@@ -1,7 +1,7 @@
 <div>
     <link href="/styles/login.css" rel="stylesheet" />
     <div class="login_container">
-        <form action="{{post_url}}" method="post">
+        <form action="{{post_url}}" method="post" class="login_form">
             <div class="login_heading"> {{title}} </div>
             <div class="login_input">
                 <input type="text" name="username" placeholder="Username" required>
@@ -10,7 +10,7 @@
                 <input type="password" name="password" placeholder="Password" required>
             </div>
             <div class="login_input">
-                <button type="submit">Login</button>
+                <button type="submit"> Submit </button>
             </div>
         </form>
         {% if let Some(sub_text) = sub_text %}
