@@ -1,9 +1,11 @@
+mod error;
 mod explore;
 mod homepage;
 mod library;
 mod login;
 mod streaming;
 
+pub use error::error;
 pub use explore::explore;
 pub use homepage::homepage;
 pub use library::library;

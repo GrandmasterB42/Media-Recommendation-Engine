@@ -6,8 +6,8 @@ use serde::Deserialize;
 use crate::{
     state::AppResult,
     utils::{
-        frontend_redirect, frontend_redirect_explicit,
-        templates::{Error, Homepage, Index},
+        frontend_redirect,
+        templates::{Homepage, Index},
         HXTarget,
     },
 };
@@ -15,7 +15,6 @@ use crate::{
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 pub enum Location {
-    Err { err: String },
     Content { content: String },
     All { all: String },
 }
@@ -32,11 +31,6 @@ pub async fn homepage(location: Option<Query<Location>>) -> AppResult<impl IntoR
 
     let body = if let Some(Query(location)) = location {
         match location {
-            Location::Err { err } => Error {
-                err: &err,
-                redirect: &frontend_redirect_explicit("/", HXTarget::All, Some("/")),
-            }
-            .render(),
             Location::Content { content } => {
                 body_html.route = &content;
                 body_html.render()

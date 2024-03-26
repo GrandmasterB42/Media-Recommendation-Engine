@@ -81,7 +81,8 @@ async fn main() {
         .merge(htmx())
         .merge(dynamic_content())
         .nest("/auth", routes::login())
-        .fallback(Redirect::permanent("/?err=404"))
+        .route("/error", get(routes::error))
+        .fallback(Redirect::permanent("/error?err=404"))
         .with_state(AppState::new(db.clone()))
         .layer(auth);
 
