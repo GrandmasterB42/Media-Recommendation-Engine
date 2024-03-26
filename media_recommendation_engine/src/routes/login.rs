@@ -1,3 +1,5 @@
+use std::{fmt, str::FromStr};
+
 use askama::Template;
 use askama_axum::IntoResponse;
 use axum::{
@@ -7,7 +9,7 @@ use axum::{
     routing::{get, post},
     Form, Router,
 };
-use serde::Deserialize;
+use serde::{de, Deserialize, Deserializer};
 
 use crate::{
     database::{Database, QueryRowGetConnExt},
@@ -27,24 +29,62 @@ pub fn login() -> Router<AppState> {
         .route("/register/submit", post(register_form))
 }
 
+fn empty_string_as_none<'de, D, T>(de: D) -> Result<Option<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: FromStr,
+    T::Err: fmt::Display,
+{
+    let opt = Option::<String>::deserialize(de)?;
+    match opt.as_deref() {
+        None | Some("") => Ok(None),
+        Some(s) => FromStr::from_str(s).map_err(de::Error::custom).map(Some),
+    }
+}
+
+#[derive(Deserialize)]
+struct Next {
+    #[serde(default, deserialize_with = "empty_string_as_none")]
+    next: Option<String>,
+}
+
 #[derive(Deserialize)]
 struct Message {
+    #[serde(default, deserialize_with = "empty_string_as_none")]
     message: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct Params {
+    #[serde(default, deserialize_with = "empty_string_as_none")]
+    message: Option<String>,
+    #[serde(default, deserialize_with = "empty_string_as_none")]
+    next: Option<String>,
+}
+
 async fn login_page(
-    Query(message): Query<Message>,
+    Query(params): Query<Params>,
     State(db): State<Database>,
 ) -> AppResult<impl IntoResponse> {
+    let message = params.message;
+    let next = params.next;
+
+    let post_url = &match next {
+        Some(next) => format!("/auth/login/submit?next={next}"),
+        None => "/auth/login/submit".to_owned(),
+    };
+
+    let sub_text = if is_noonne_registered(db).await? {
+        Some(r#"<a href="/auth/register"> Register here! </a>"#)
+    } else {
+        None
+    };
+
     let login_page = LoginPage {
         title: "Login",
-        post_url: "/auth/login/submit",
-        sub_text: if is_noonne_registered(db).await? {
-            Some(r#"<a href="/auth/register"> Register here! </a>"#)
-        } else {
-            None
-        },
-        message: message.message,
+        post_url,
+        sub_text,
+        message: message.map(|m| m.to_owned()),
     };
     let body = login_page.render()?;
 
@@ -54,10 +94,20 @@ async fn login_page(
     })
 }
 
-async fn login_form(mut auth: AuthSession, Form(creds): Form<Credentials>) -> impl IntoResponse {
+async fn login_form(
+    mut auth: AuthSession,
+    Query(next): Query<Next>,
+    Form(creds): Form<Credentials>,
+) -> impl IntoResponse {
     let user = match auth.authenticate(creds).await {
         Ok(Some(user)) => user,
-        Ok(None) => return Redirect::to("/auth/login?message=Wrong Credentials").into_response(),
+        Ok(None) => {
+            let redirect = match next.next {
+                Some(next) => format!("/auth/login?message=Wrong Credentials&next={next}"),
+                None => "/auth/login?message=Wrong Credentials".to_owned(),
+            };
+            return Redirect::to(&redirect).into_response();
+        }
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
 
@@ -65,7 +115,9 @@ async fn login_form(mut auth: AuthSession, Form(creds): Form<Credentials>) -> im
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
 
-    Redirect::to("/").into_response()
+    let redirect = next.next.unwrap_or("/".to_owned());
+
+    Redirect::to(&redirect).into_response()
 }
 
 async fn logout(mut auth: AuthSession) -> impl IntoResponse {

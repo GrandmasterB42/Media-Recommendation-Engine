@@ -4,7 +4,7 @@ use axum::{
     async_trait,
     body::Body,
     extract::Request,
-    http::{Response, StatusCode},
+    http::{HeaderMap, Response, StatusCode},
     middleware::Next,
     response::IntoResponse,
 };
@@ -368,9 +368,32 @@ impl ExpiredDeletion for Database {
     }
 }
 
-pub async fn login_required(auth: AuthSession, request: Request, next: Next) -> Response<Body> {
+pub async fn login_required(
+    auth: AuthSession,
+    hm: HeaderMap,
+    request: Request,
+    next: Next,
+) -> Response<Body> {
+    let current = hm.get("HX-Current-Url");
+    let complete = current
+        .and_then(|current| current.to_str().ok())
+        .unwrap_or_default();
+    let path = complete
+        .split_once("//")
+        .unwrap_or(("", ""))
+        .1
+        .split_once('/')
+        .unwrap_or(("", ""))
+        .1;
+
+    println!("/{path}");
+
     match auth.user {
         Some(_) => next.run(request).await.into_response(),
-        None => (StatusCode::UNAUTHORIZED, [("HX-Redirect", "/auth/login")]).into_response(),
+        None => (
+            StatusCode::UNAUTHORIZED,
+            [("HX-Redirect", format!("/auth/login?next=/{path}"))],
+        )
+            .into_response(),
     }
 }
