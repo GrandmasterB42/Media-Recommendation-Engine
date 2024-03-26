@@ -1,6 +1,13 @@
 use std::{collections::HashSet, ops::Deref};
 
-use axum::async_trait;
+use axum::{
+    async_trait,
+    body::Body,
+    extract::Request,
+    http::{Response, StatusCode},
+    middleware::Next,
+    response::IntoResponse,
+};
 use axum_login::{
     tower_sessions::{
         session::{Id, Record},
@@ -358,5 +365,12 @@ impl ExpiredDeletion for Database {
         .convert_err::<SessionStoreError>()?;
 
         Ok(())
+    }
+}
+
+pub async fn login_required(auth: AuthSession, request: Request, next: Next) -> Response<Body> {
+    match auth.user {
+        Some(_) => next.run(request).await.into_response(),
+        None => (StatusCode::UNAUTHORIZED, [("HX-Redirect", "/auth/login")]).into_response(),
     }
 }

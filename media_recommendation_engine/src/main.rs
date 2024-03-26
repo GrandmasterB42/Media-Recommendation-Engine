@@ -2,10 +2,9 @@
 
 extern crate ffmpeg_next as ffmpeg;
 
-use axum::{response::Redirect, routing::get, Router};
+use axum::{middleware, response::Redirect, routing::get, Router};
 
 use axum_login::{
-    login_required,
     tower_sessions::{session_store::ExpiredDeletion, Expiry, SessionManagerLayer},
     AuthManagerLayerBuilder,
 };
@@ -20,7 +19,7 @@ use crate::{
     indexing::periodic_indexing,
     routes::dynamic_content,
     state::AppState,
-    utils::{htmx, init_tracing, tracing_layer, HandleErr},
+    utils::{htmx, init_tracing, login_required, tracing_layer, HandleErr},
 };
 
 #[macro_use]
@@ -77,7 +76,7 @@ async fn main() {
         .route("/explore", get(routes::explore))
         .route("/settings", get(|| async move { "" }))
         .nest("/video", routes::streaming())
-        .layer(login_required!(Database, login_url = "/auth/login"))
+        .layer(middleware::from_fn(login_required))
         .merge(htmx())
         .merge(dynamic_content())
         .nest("/auth", routes::login())
