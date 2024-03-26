@@ -13,11 +13,11 @@
                 <button type="submit"> Submit </button>
             </div>
         </form>
+        {% if let Some(message) = message %}
+        <div class="message"> {{message}} </div>
+        {% endif %}
         {% if let Some(sub_text) = sub_text %}
         <div class="login_subtext"> {{sub_text|safe}} </div>
         {% endif %}
     </div>
-    {% if let Some(message) = message %}
-    <div class="message"> {{message}} </div>
-    {% endif %}
 </div>
