@@ -27,7 +27,7 @@ use crate::{
 mod utils;
 mod database;
 mod indexing;
-mod recommendor;
+mod recommendation;
 mod routes;
 mod state;
 

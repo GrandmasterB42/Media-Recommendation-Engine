@@ -33,7 +33,7 @@ use tracing::{debug, error};
 
 use crate::{
     database::{Database, QueryRowGetConnExt},
-    recommendor::RecommendationPopup,
+    recommendation::RecommendationPopup,
     state::{AppResult, AppState},
     utils::{pseudo_random, ConvertErr, HandleErr},
 };
