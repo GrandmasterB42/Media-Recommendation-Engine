@@ -10,9 +10,8 @@ use serde::Deserialize;
 
 use crate::{
     database::{Database, QueryRowGetConnExt, QueryRowIntoConnExt, QueryRowIntoStmtExt},
-    routes::HXTarget,
     state::{AppResult, AppState},
-    utils::{frontend_redirect, frontend_redirect_explicit, ConvertErr},
+    utils::{frontend_redirect, frontend_redirect_explicit, ConvertErr, HXTarget},
 };
 
 use super::StreamingSessions;

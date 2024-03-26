@@ -1,9 +1,32 @@
 use askama_axum::IntoResponse;
 use axum::{routing::get, Router};
 
-use crate::{routes::HXTarget, state::AppState};
+use crate::state::AppState;
 
 use super::relative;
+
+// This is used for replacing stuff on the index page
+#[derive(Clone, Copy)]
+pub enum HXTarget {
+    All,
+    Content,
+}
+
+impl HXTarget {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            HXTarget::All => "all",
+            HXTarget::Content => "content",
+        }
+    }
+
+    pub const fn as_target(&self) -> &'static str {
+        match self {
+            HXTarget::All => "#all",
+            HXTarget::Content => "#content",
+        }
+    }
+}
 
 pub fn frontend_redirect(route: &str, target: HXTarget) -> String {
     frontend_redirect_explicit(

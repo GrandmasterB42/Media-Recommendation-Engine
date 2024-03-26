@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 use crate::{
     state::AppResult,
-    utils::{frontend_redirect, frontend_redirect_explicit},
+    utils::{frontend_redirect, frontend_redirect_explicit, HXTarget},
 };
 
 #[derive(Debug, Deserialize)]
@@ -14,28 +14,6 @@ pub enum Location {
     Err { err: String },
     Content { content: String },
     All { all: String },
-}
-
-#[derive(Clone, Copy)]
-pub enum HXTarget {
-    All,
-    Content,
-}
-
-impl HXTarget {
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            HXTarget::All => "all",
-            HXTarget::Content => "content",
-        }
-    }
-
-    pub const fn as_target(&self) -> &'static str {
-        match self {
-            HXTarget::All => "#all",
-            HXTarget::Content => "#content",
-        }
-    }
 }
 
 #[derive(Template)]

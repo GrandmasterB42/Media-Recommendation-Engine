@@ -10,7 +10,7 @@ mod tracing;
 pub use tracing::{init_tracing, tracing_layer};
 
 mod frontend;
-pub use frontend::{frontend_redirect, frontend_redirect_explicit, htmx};
+pub use frontend::{frontend_redirect, frontend_redirect_explicit, htmx, HXTarget};
 
 pub mod auth;
 pub use auth::{AuthSession, Credentials};
