@@ -11,7 +11,11 @@ use serde::Deserialize;
 use crate::{
     database::{Database, QueryRowGetConnExt, QueryRowIntoConnExt, QueryRowIntoStmtExt},
     state::{AppResult, AppState},
-    utils::{frontend_redirect, frontend_redirect_explicit, ConvertErr, HXTarget},
+    utils::{
+        frontend_redirect, frontend_redirect_explicit,
+        templates::{GridElement, LargeImage, Library, PreviewTemplate},
+        ConvertErr, HXTarget,
+    },
 };
 
 use super::StreamingSessions;
@@ -21,22 +25,6 @@ pub fn library() -> Router<AppState> {
         .route("/library", get(get_library))
         .route("/sessions", get(get_sessions))
         .route("/preview/:preview/:id", get(preview))
-}
-
-#[derive(Template)]
-#[template(path = "../frontend/content/library.html")]
-struct Library {
-    sessions: Vec<GridElement>,
-    franchises: Vec<GridElement>,
-}
-
-#[derive(Template)]
-#[template(path = "../frontend/content/grid_element.html")]
-struct GridElement {
-    title: String,
-    redirect_entire: String,
-    redirect_img: String,
-    redirect_title: String,
 }
 
 async fn get_library(
@@ -103,13 +91,6 @@ enum Preview {
     Episode,
 }
 
-#[derive(Template)]
-#[template(path = "../frontend/content/preview.html")]
-struct PreviewTemplate<'a> {
-    top: LargeImage,
-    categories: Vec<(&'a str, Vec<GridElement>)>,
-}
-
 async fn preview(
     State(db): State<Database>,
     Path((prev, id)): Path<(Preview, u64)>,
@@ -118,13 +99,6 @@ async fn preview(
         top: top_preview(db.clone(), id, prev).await?,
         categories: preview_categories(&db, id, prev).await?,
     })
-}
-
-#[derive(Template)]
-#[template(path = "../frontend/content/large_preview_image.html")]
-struct LargeImage {
-    title: String,
-    image_interaction: String,
 }
 
 async fn top_preview(conn: Database, id: u64, prev: Preview) -> AppResult<LargeImage> {

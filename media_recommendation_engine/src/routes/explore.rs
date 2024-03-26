@@ -1,9 +1,6 @@
-use askama::Template;
 use askama_axum::IntoResponse;
 
-#[derive(Template)]
-#[template(path = "../frontend/content/explore.html")]
-struct ExploreTemplate;
+use crate::utils::templates::ExploreTemplate;
 
 pub async fn explore() -> impl IntoResponse {
     ExploreTemplate

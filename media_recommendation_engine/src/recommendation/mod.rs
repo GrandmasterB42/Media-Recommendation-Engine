@@ -1,21 +1,12 @@
-use askama::Template;
 use rusqlite::{Connection, OptionalExtension};
 
 use crate::{
     database::{Database, QueryRowGetConnExt, QueryRowIntoConnExt},
     state::{AppError, AppResult},
-    utils::{pseudo_random_range, HandleErr},
+    utils::{pseudo_random_range, templates::RecommendationPopup, HandleErr},
 };
 
 // Probably spawn a recommendation Engine and have a mpsc channel in appstate, to be able to make request to the recommendation engine, which responds with a future. This entire things makes it so there is one global state for the recommendor
-
-#[derive(Template, Clone)]
-#[template(path = "../frontend/content/recommendation_popup.html")]
-pub struct RecommendationPopup {
-    id: u64,
-    image: String,
-    title: String,
-}
 
 impl RecommendationPopup {
     pub async fn new(db: Database, video_id: u64) -> AppResult<Self> {

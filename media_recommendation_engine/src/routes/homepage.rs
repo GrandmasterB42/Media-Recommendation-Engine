@@ -5,7 +5,11 @@ use serde::Deserialize;
 
 use crate::{
     state::AppResult,
-    utils::{frontend_redirect, frontend_redirect_explicit, HXTarget},
+    utils::{
+        frontend_redirect, frontend_redirect_explicit,
+        templates::{Error, Homepage, Index},
+        HXTarget,
+    },
 };
 
 #[derive(Debug, Deserialize)]
@@ -14,30 +18,6 @@ pub enum Location {
     Err { err: String },
     Content { content: String },
     All { all: String },
-}
-
-#[derive(Template)]
-#[template(path = "../frontend/content/index.html")]
-pub struct Index {
-    pub body: String,
-    pub all: String,
-}
-
-#[derive(Template)]
-#[template(path = "../frontend/content/homepage.html")]
-struct Homepage<'a> {
-    redirect_library: &'a str,
-    redirect_explore: &'a str,
-    redirect_settings: &'a str,
-    content: &'a str,
-    route: &'a str,
-}
-
-#[derive(Template)]
-#[template(path = "../frontend/content/error.html")]
-struct Error<'a> {
-    err: &'a str,
-    redirect: &'a str,
 }
 
 #[debug_handler]

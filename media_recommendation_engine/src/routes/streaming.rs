@@ -33,9 +33,12 @@ use tracing::{debug, error};
 
 use crate::{
     database::{Database, QueryRowGetConnExt},
-    recommendation::RecommendationPopup,
     state::{AppResult, AppState},
-    utils::{pseudo_random, ConvertErr, HandleErr},
+    utils::{
+        pseudo_random,
+        templates::{RecommendationPopup, Video},
+        ConvertErr, HandleErr,
+    },
 };
 
 #[derive(Clone)]
@@ -383,7 +386,8 @@ async fn ws_session(
     ws.on_upgrade(move |socket| ws_session_callback(socket, id, sessions, db))
 }
 
-#[derive(Template, Clone)]
+// TODO: Decouple notification from the template and move it
+#[derive(Template)]
 #[template(path = "../frontend/content/notification.html")]
 struct Notification {
     msg: String,
@@ -680,7 +684,7 @@ async fn notifier(
             },
         }
     } {
-        if let Some(new_notification) = notification.clone() {
+        if let Some(new_notification) = notification {
             match new_notification.typ {
                 SimplifiedType::Seek => seek_queue.push(new_notification),
                 SimplifiedType::StateToggle => toggle_queue.push(new_notification),
@@ -796,12 +800,6 @@ async fn send_session_to_clients(
             .await
             .log_err_with_msg("an error occured while sending a message to the client");
     }
-}
-
-#[derive(Template)]
-#[template(path = "../frontend/content/video.html")]
-struct Video {
-    id: u64,
 }
 
 async fn session(Path(id): Path<u64>) -> impl IntoResponse {

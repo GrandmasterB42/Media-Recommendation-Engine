@@ -12,10 +12,11 @@ use serde::Deserialize;
 use crate::{
     database::{Database, QueryRowGetConnExt},
     state::{AppError, AppResult, AppState},
-    utils::{AuthSession, ConvertErr, Credentials, HandleErr},
+    utils::{
+        templates::{Index, LoginPage},
+        AuthSession, ConvertErr, Credentials, HandleErr,
+    },
 };
-
-use super::homepage::Index;
 
 pub fn login() -> Router<AppState> {
     Router::new()
@@ -24,15 +25,6 @@ pub fn login() -> Router<AppState> {
         .route("/logout", get(logout))
         .route("/register", get(register_page))
         .route("/register/submit", post(register_form))
-}
-
-#[derive(Template)]
-#[template(path = "../frontend/content/login.html")]
-struct LoginPage<'a> {
-    title: &'a str,
-    post_url: &'a str,
-    sub_text: Option<&'a str>,
-    message: Option<String>,
 }
 
 #[derive(Deserialize)]
