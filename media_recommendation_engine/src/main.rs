@@ -1,4 +1,5 @@
 #![feature(pattern)]
+#![feature(never_type)]
 
 extern crate ffmpeg_next as ffmpeg;
 
@@ -8,8 +9,9 @@ use axum_login::{
     tower_sessions::{session_store::ExpiredDeletion, Expiry, SessionManagerLayer},
     AuthManagerLayerBuilder,
 };
+use state::Cancellation;
 use time::Duration;
-use tokio::net::TcpListener;
+use tokio::{net::TcpListener, signal, task::JoinHandle};
 
 use tower_sessions::cookie::Key;
 use tracing::{info, warn};
@@ -69,6 +71,8 @@ async fn main() {
 
     let auth = AuthManagerLayerBuilder::new(session_store, session_layer).build();
 
+    let (state, cancel) = AppState::new(db.clone());
+
     let app = Router::new()
         .merge(tracing_layer())
         .route("/", get(routes::homepage))
@@ -82,7 +86,7 @@ async fn main() {
         .nest("/auth", routes::login())
         .route("/error", get(routes::error))
         .fallback(Redirect::permanent("/error?err=404"))
-        .with_state(AppState::new(db.clone()))
+        .with_state(state)
         .layer(auth);
 
     let ip = "0.0.0.0:3000";
@@ -91,36 +95,41 @@ async fn main() {
 
     info!("Starting server on {ip}");
 
-    async fn server(listener: TcpListener, app: Router) {
-        axum::serve(listener, app)
+    let indexing = tokio::spawn(periodic_indexing(db));
+
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown(indexing, cancel))
+        .await
+        .expect("failed to start server");
+}
+
+async fn shutdown(indexing: JoinHandle<!>, cancel: Cancellation) {
+    let ctrl_c = async {
+        signal::ctrl_c()
             .await
-            .expect("failed to start server");
-    }
-    let server = server(listener, app);
+            .expect("failed to install Ctrl+C handler");
+    };
 
-    tokio::spawn(periodic_indexing(db));
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("failed to install signal handler")
+            .recv()
+            .await;
+    };
 
-    /*
-    (last tested in axum 0.6)
-    TODO: shutting down
-    wanted to use .with_graceful_shutdown(),
-    but when using:
-
-    async {
-            tokio::signal::ctrl_c()
-                .await
-                .expect("failed to start listening for ctrl+c")
-    }
-
-    inside, it doesn't shut down close to immediately,
-    but waits until all connections are closed or something like that?
-
-    This at least gets rid of the error message
-    */
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
 
     tokio::select! {
-        _ = server => {},
-        _ = tokio::signal::ctrl_c() => {},
+        _ = ctrl_c => {},
+        _ = terminate => {},
     }
+
+    info!("Starting to shut down...");
+
+    indexing.abort();
+    cancel.cancel();
+
     info!("Suceessfully shut down");
 }

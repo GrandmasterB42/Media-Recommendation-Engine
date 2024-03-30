@@ -35,3 +35,4 @@ tower-sessions-core = { version = "0.12.0", default-features = false, features =
 ] }
 rmp-serde = "1.1.2"
 password-auth = "1.0.0"
+tokio-util = "0.7.10"

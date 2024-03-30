@@ -33,14 +33,13 @@ use tracing::{debug, error};
 
 use crate::{
     database::{Database, QueryRowGetConnExt},
-    state::{AppResult, AppState},
+    state::{AppResult, AppState, Cancellation},
     utils::{
         pseudo_random,
         templates::{RecommendationPopup, Video},
         ConvertErr, HandleErr,
     },
 };
-
 #[derive(Clone)]
 pub struct StreamingSessions {
     sessions: Arc<Mutex<HashMap<u32, Arc<Session>>>>,
@@ -344,19 +343,25 @@ pub fn streaming() -> Router<AppState> {
 async fn content(
     Path(id): Path<u32>,
     State(sessions): State<StreamingSessions>,
+    State(cancel): State<Cancellation>,
     request: Request<Body>,
 ) -> Result<impl IntoResponse, impl IntoResponse> {
     let Some(session) = sessions.get(&id).await else {
         return Err((StatusCode::FORBIDDEN).into_response());
     };
     let mut stream = session.stream().await;
-    Ok(stream.call(request).await)
+
+    tokio::select! {
+        resp = stream.call(request) => Ok(resp.into_response()),
+        _  = cancel.cancelled() => Err(StatusCode::REQUEST_TIMEOUT.into_response())
+    }
 }
 
 async fn new_session(
     Path(id): Path<u64>,
     State(mut sessions): State<StreamingSessions>,
     State(db): State<Database>,
+    State(cancel): State<Cancellation>,
 ) -> AppResult<impl IntoResponse> {
     let random = loop {
         let random = pseudo_random();
@@ -367,7 +372,11 @@ async fn new_session(
 
     let (websocket_sender, _) = broadcast::channel(32);
     let (notification_sender, notification_receiver) = mpsc::channel(32);
-    tokio::spawn(notifier(notification_receiver, websocket_sender.clone()));
+    tokio::spawn(notifier(
+        notification_receiver,
+        websocket_sender.clone(),
+        cancel,
+    ));
 
     let session = Session::new(&db, id, notification_sender, websocket_sender).await?;
     sessions.insert(random, session).await;
@@ -382,8 +391,9 @@ async fn ws_session(
     Path(id): Path<u32>,
     State(sessions): State<StreamingSessions>,
     State(db): State<Database>,
+    State(cancel): State<Cancellation>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| ws_session_callback(socket, id, sessions, db))
+    ws.on_upgrade(move |socket| ws_session_callback(socket, id, sessions, db, cancel))
 }
 
 // TODO: Decouple notification from the template and move it
@@ -408,6 +418,7 @@ async fn ws_session_callback(
     id: u32,
     mut sessions: StreamingSessions,
     db: Database,
+    cancel: Cancellation,
 ) {
     let user_id = pseudo_random();
 
@@ -475,6 +486,7 @@ async fn ws_session_callback(
         );
 
     tokio::select! {
+        _ = cancel.cancelled() => {send_task.abort(); recv_task.abort()}
         _ = (&mut send_task) => {recv_task.abort()}
         _ = (&mut recv_task) => {send_task.abort()}
     }
@@ -669,6 +681,7 @@ impl NotificationQueue {
 async fn notifier(
     mut receiver: mpsc::Receiver<Notification>,
     session_sender: broadcast::Sender<WSMessage>,
+    cancel: Cancellation,
 ) {
     let mut seek_queue = NotificationQueue::new();
     let mut toggle_queue = NotificationQueue::new();
@@ -682,6 +695,7 @@ async fn notifier(
                 notification = noti;
                 true
             },
+            _ = cancel.cancelled() => false,
         }
     } {
         if let Some(new_notification) = notification {

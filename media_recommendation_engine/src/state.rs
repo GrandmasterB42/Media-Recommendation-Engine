@@ -1,6 +1,7 @@
-use std::{error::Error, fmt::Display};
+use std::{error::Error, fmt::Display, ops::Deref};
 
 use axum::{extract::FromRef, http, response::IntoResponse};
+use tokio_util::sync::CancellationToken;
 
 use crate::{database::Database, routes::StreamingSessions};
 
@@ -8,15 +9,22 @@ use crate::{database::Database, routes::StreamingSessions};
 pub struct AppState {
     database: Database,
     streaming_sessions: StreamingSessions,
+    cancellation: Cancellation,
 }
 
 impl AppState {
-    pub fn new(database: Database) -> Self {
+    pub fn new(database: Database) -> (Self, Cancellation) {
         let streaming_sessions = StreamingSessions::new();
-        Self {
-            database,
-            streaming_sessions,
-        }
+        let cancel = Cancellation(CancellationToken::new());
+        let cancellation = cancel.clone();
+        (
+            Self {
+                database,
+                streaming_sessions,
+                cancellation,
+            },
+            cancel,
+        )
     }
 }
 
@@ -29,6 +37,23 @@ impl FromRef<AppState> for Database {
 impl FromRef<AppState> for StreamingSessions {
     fn from_ref(state: &AppState) -> StreamingSessions {
         state.streaming_sessions.clone()
+    }
+}
+
+impl FromRef<AppState> for Cancellation {
+    fn from_ref(state: &AppState) -> Cancellation {
+        state.cancellation.clone()
+    }
+}
+
+#[derive(Clone)]
+pub struct Cancellation(CancellationToken);
+
+impl Deref for Cancellation {
+    type Target = CancellationToken;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
