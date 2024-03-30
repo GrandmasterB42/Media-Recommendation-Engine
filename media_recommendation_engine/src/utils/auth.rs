@@ -386,8 +386,6 @@ pub async fn login_required(
         .unwrap_or(("", ""))
         .1;
 
-    println!("/{path}");
-
     match auth.user {
         Some(_) => next.run(request).await.into_response(),
         None => (
