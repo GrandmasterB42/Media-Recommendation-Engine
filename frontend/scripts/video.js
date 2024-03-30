@@ -18,6 +18,12 @@ document.body.addEventListener("htmx:wsBeforeMessage", (event) => {
     }
 });
 
+document.body.addEventListener("htmx:wsError", (event) => {
+    console.log("Error: ", event.detail.message);
+    console.log("Reloading page");
+    location.reload();
+});
+
 let active = false;
 async function wait_for_interact() {
     while (!navigator.userActivation.isActive) {

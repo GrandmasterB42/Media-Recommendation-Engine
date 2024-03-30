@@ -101,6 +101,8 @@ async fn main() {
         .with_graceful_shutdown(shutdown(indexing, cancel))
         .await
         .expect("failed to start server");
+
+    info!("Suceessfully shut down");
 }
 
 async fn shutdown(indexing: JoinHandle<!>, cancel: Cancellation) {
@@ -130,6 +132,4 @@ async fn shutdown(indexing: JoinHandle<!>, cancel: Cancellation) {
 
     indexing.abort();
     cancel.cancel();
-
-    info!("Suceessfully shut down");
 }
