@@ -374,6 +374,10 @@ pub async fn login_required(
     request: Request,
     next: Next,
 ) -> Response<Body> {
+    if auth.user.is_some() {
+        return next.run(request).await.into_response();
+    }
+
     let current = hm.get("HX-Current-Url");
     let complete = current
         .and_then(|current| current.to_str().ok())
@@ -389,9 +393,9 @@ pub async fn login_required(
     let htmx_enabled = hm.get("HX-Request").is_some();
     let redirect = format!("/auth/login?next=/{path}");
 
-    match (auth.user, htmx_enabled) {
-        (Some(_), _) => next.run(request).await.into_response(),
-        (None, false) => (StatusCode::SEE_OTHER, [("Location", redirect)]).into_response(),
-        (None, true) => (StatusCode::UNAUTHORIZED, [("HX-Redirect", redirect)]).into_response(),
+    if htmx_enabled {
+        (StatusCode::UNAUTHORIZED, [("HX-Redirect", redirect)]).into_response()
+    } else {
+        (StatusCode::SEE_OTHER, [("Location", redirect)]).into_response()
     }
 }
