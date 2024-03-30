@@ -386,12 +386,12 @@ pub async fn login_required(
         .unwrap_or(("", ""))
         .1;
 
-    match auth.user {
-        Some(_) => next.run(request).await.into_response(),
-        None => (
-            StatusCode::UNAUTHORIZED,
-            [("HX-Redirect", format!("/auth/login?next=/{path}"))],
-        )
-            .into_response(),
+    let htmx_enabled = hm.get("HX-Request").is_some();
+    let redirect = format!("/auth/login?next=/{path}");
+
+    match (auth.user, htmx_enabled) {
+        (Some(_), _) => next.run(request).await.into_response(),
+        (None, false) => (StatusCode::SEE_OTHER, [("Location", redirect)]).into_response(),
+        (None, true) => (StatusCode::UNAUTHORIZED, [("HX-Redirect", redirect)]).into_response(),
     }
 }
