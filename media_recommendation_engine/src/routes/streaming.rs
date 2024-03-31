@@ -37,7 +37,7 @@ use crate::{
     utils::{
         pseudo_random,
         templates::{RecommendationPopup, Video},
-        ConvertErr, HandleErr,
+        AuthSession, ConvertErr, HandleErr,
     },
 };
 #[derive(Clone)]
@@ -392,8 +392,9 @@ async fn ws_session(
     State(sessions): State<StreamingSessions>,
     State(db): State<Database>,
     State(cancel): State<Cancellation>,
+    auth: AuthSession,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| ws_session_callback(socket, id, sessions, db, cancel))
+    ws.on_upgrade(move |socket| ws_session_callback(socket, id, sessions, db, cancel, auth))
 }
 
 // TODO: Decouple notification from the template and move it
@@ -419,8 +420,11 @@ async fn ws_session_callback(
     mut sessions: StreamingSessions,
     db: Database,
     cancel: Cancellation,
+    auth: AuthSession,
 ) {
+    let user = auth.user.unwrap();
     let user_id = pseudo_random();
+    let username = user.username;
 
     let (mut sender, receiver) = socket.split();
 
@@ -474,7 +478,7 @@ async fn ws_session_callback(
             session_sender,
             notification_sender,
             id,
-            user_id,
+            (user_id, &username),
             sessions_ref,
         )
         .await
@@ -514,7 +518,7 @@ async fn receive_client_messages(
     session_sender: broadcast::Sender<WSMessage>,
     notification_sender: mpsc::Sender<Notification>,
     session_id: u32,
-    client_id: u32,
+    user: (u32, &str),
     sessions: StreamingSessions,
 ) -> AppResult<()> {
     while let Some(msg) = client_receiver.next().await {
@@ -530,7 +534,7 @@ async fn receive_client_messages(
                     &notification_sender,
                     text,
                     session_id,
-                    client_id,
+                    user,
                     &sessions,
                 )
                 .await
@@ -552,7 +556,7 @@ async fn handle_client_message(
     notification_sender: &mpsc::Sender<Notification>,
     text: String,
     session_id: u32,
-    client_id: u32,
+    user: (u32, &str),
     sessions: &StreamingSessions,
 ) -> AppResult<()> {
     let Ok(msg) = serde_json::from_str(&text) else {
@@ -579,7 +583,7 @@ async fn handle_client_message(
                 WSMessageType::Update => break 'update_block,
                 WSMessageType::State => unreachable!(), // Only the server should send this
             }
-            send_notification(notification_sender, &msg, client_id).await;
+            send_notification(notification_sender, &msg, user).await;
         }
         WSMessage::Join => {
             session_sender
@@ -591,7 +595,7 @@ async fn handle_client_message(
                 .send(WSMessage::RequestNext { at_greater_than })
                 .log_err_with_msg("failed to send message to session");
 
-            send_notification(notification_sender, &msg, client_id).await;
+            send_notification(notification_sender, &msg, user).await;
         }
         WSMessage::SendNext => {
             let popup = session.get_popup().await?;
@@ -737,7 +741,7 @@ fn send_to_session(sender: &broadcast::Sender<WSMessage>, notification: &Notific
         .log_err_with_msg("failed to send notification to session");
 }
 
-fn seek_text(client_id: u32, pos: f32) -> String {
+fn seek_text(username: &str, pos: f32) -> String {
     let pos = pos / 60.0;
     let mut hours = 0;
     let mut minutes = pos.trunc() as u32;
@@ -747,20 +751,20 @@ fn seek_text(client_id: u32, pos: f32) -> String {
     }
     let seconds = (pos.fract() * 60.0) as u8;
     if hours == 0 {
-        format!("{client_id} skipped to {minutes}:{seconds:0>2}")
+        format!("{username} skipped to {minutes}:{seconds:0>2}")
     } else {
-        format!("{client_id} skipped to {hours}:{minutes:0>2}:{seconds:0>2}")
+        format!("{username} skipped to {hours}:{minutes:0>2}:{seconds:0>2}")
     }
 }
 
 async fn send_notification(
     notification_sender: &mpsc::Sender<Notification>,
     msg: &WSMessage,
-    client_id: u32,
+    (client_id, username): (u32, &str),
 ) {
     let (msg, typ) = match msg {
         WSMessage::Join => (
-            format!("{client_id} joined the session"),
+            format!("{username} joined the session"),
             SimplifiedType::None,
         ),
         WSMessage::Update {
@@ -769,14 +773,14 @@ async fn send_notification(
             ..
         } => match message_type {
             WSMessageType::Pause => (
-                format!("{client_id} paused the video"),
+                format!("{username} paused the video"),
                 SimplifiedType::StateToggle,
             ),
             WSMessageType::Play => (
-                format!("{client_id} resumed the video"),
+                format!("{username} resumed the video"),
                 SimplifiedType::StateToggle,
             ),
-            WSMessageType::Seek => (seek_text(client_id, *video_time), SimplifiedType::Seek),
+            WSMessageType::Seek => (seek_text(username, *video_time), SimplifiedType::Seek),
             _ => unreachable!(),
         },
         _ => unreachable!(),

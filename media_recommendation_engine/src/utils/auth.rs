@@ -30,8 +30,8 @@ pub type AuthSession = axum_login::AuthSession<Database>;
 
 #[derive(Clone)]
 pub struct User {
-    id: i64,
-    username: String,
+    pub id: i64,
+    pub username: String,
     password: String,
 }
 
