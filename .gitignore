@@ -6,6 +6,8 @@ database/database.sqlite-journal
 database/database.sqlite-shm
 database/database.sqlite-wal
 
+mreconfig.toml
+
 ffmpeg/*
 !/ffmpeg/Note
 # fix for windows is to move the files from ffmpeg/bin to the project root, hence the .dll and .exe excludes

@@ -1,0 +1,281 @@
+use std::{path::Path, sync::Arc, time::SystemTime};
+
+use crate::{
+    database::{Database, QueryRowGetConnExt},
+    state::{AppResult, Cancellation},
+};
+use serde::{Deserialize, Serialize};
+use tokio::{
+    io::AsyncWriteExt,
+    sync::{
+        watch::{self, Receiver, Sender},
+        RwLock,
+    },
+};
+use tracing::{debug, error, warn};
+
+use super::{ConvertErr, HandleErr};
+
+#[derive(Clone)]
+pub struct ServerSettings {
+    inner: Arc<RwLock<ConfigFile>>,
+    // For now this just indicates whether something has changed, not what (used in the future for web interface setting changes)
+    changed: Arc<(Sender<()>, Receiver<()>)>,
+    last_changed: SystemTime,
+    last_admin: AdminCredentials,
+}
+
+impl ServerSettings {
+    const PATH: &'static str = "mreconfig.toml";
+
+    pub async fn new(cancel: Cancellation, db: Database) -> Self {
+        let config_file = match tokio::fs::read_to_string(Self::PATH)
+            .await
+            .log_warn_with_msg("Failed to create config file, trying to create a new one")
+        {
+            Some(config_file) => config_file,
+            None => {
+                let default = ConfigFile::default();
+                Self::create_config_file(&default).await;
+                toml::to_string_pretty(&default)
+                    .expect("failed to serialize default config after it should have been created, this should never happen")
+            }
+        };
+
+        let config: ConfigFile = toml::from_str(&config_file)
+            .log_err_with_msg("Failed to parse config file, using the default config instead")
+            .unwrap_or_default();
+
+        let change = watch::channel(());
+
+        let recv = change.1.clone();
+
+        let last_changed = tokio::fs::metadata(Self::PATH)
+            .await
+            .unwrap()
+            .modified()
+            .unwrap_or(SystemTime::now());
+
+        let last_admin = config.admin.clone();
+
+        let mut data = Self {
+            inner: Arc::new(RwLock::new(config)),
+            changed: Arc::new(change),
+            last_changed,
+            last_admin,
+        };
+
+        data.update_db_to_file_content(&db)
+            .await
+            .log_warn_with_msg("failed to change database in accordance with config file");
+
+        tokio::spawn(Self::watch_file(data.clone(), cancel, db, recv));
+
+        data
+    }
+
+    async fn watch_file(mut self, cancel: Cancellation, db: Database, mut change: Receiver<()>) {
+        let mut update_file = false;
+        loop {
+            if !Path::new(Self::PATH).exists() {
+                warn!("Config file does not exist, trying to create one.");
+                Self::create_config_file(&self.inner().await).await;
+            }
+
+            if update_file {
+                let mut file = match tokio::fs::File::open(Self::PATH)
+                    .await
+                    .log_err_with_msg("Failed to open config file, trying to create a new one")
+                {
+                    Some(file) => file,
+                    None => {
+                        let config = self.inner().await;
+                        Self::create_config_file(&config).await;
+                        continue;
+                    }
+                };
+
+                let server_side = self.inner().await;
+                let toml_repr = toml::to_string_pretty(&server_side)
+                    .expect("failed to serialize config, this should never happen");
+
+                file.write_all(toml_repr.as_bytes())
+                    .await
+                    .log_warn_with_msg("Failed to write to config file");
+                file.flush()
+                    .await
+                    .log_warn_with_msg("Failed to flush config file");
+            } else {
+                let config_file = match tokio::fs::read_to_string(Self::PATH).await {
+                    Ok(config_file) => config_file,
+                    Err(e) => {
+                        error!("Failed to read config file: {e}");
+                        let default = ConfigFile::default();
+                        Self::create_config_file(&default).await;
+                        toml::to_string_pretty(&default)
+                            .expect("failed to serialize default config after it should have been created, this should never happen")
+                    }
+                };
+
+                let config: ConfigFile = toml::from_str(&config_file)
+                    .log_err_with_msg(
+                        "Failed to parse config file, using the default config instead",
+                    )
+                    .unwrap_or_default();
+                self.set_inner(config).await;
+            }
+
+            self.update_db_to_file_content(&db)
+                .await
+                .log_warn_with_msg("failed to change database in accordance with config file");
+
+            let (should_stop, u_f, last_changed) = tokio::select! {
+                _ = change.changed() => {
+                    (false, true, self.last_changed)
+                },
+                last = Self::resolve_once_modified(self.last_changed) => {
+                    debug!("Registered config file change");
+                    (false, false, last)
+                },
+                _ = cancel.cancelled() => (true, false, self.last_changed),
+            };
+            self.last_changed = last_changed;
+            update_file = u_f;
+
+            if should_stop {
+                break;
+            }
+        }
+    }
+
+    async fn create_config_file(config: &ConfigFile) {
+        let config = toml::to_string_pretty(config)
+            .expect("failed to serialize config, this should never happen");
+
+        while tokio::fs::write(Self::PATH, &config)
+            .await
+            .log_err_with_msg("Failed to write config file, trying again in half a minute.")
+            .is_none()
+        {
+            tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+        }
+    }
+
+    async fn resolve_once_modified(last_changed: SystemTime) -> SystemTime {
+        tokio::task::spawn(async move {
+            loop {
+                let file_last_changed = tokio::fs::metadata(Self::PATH)
+                    .await
+                    .log_err_with_msg("Failed to get metadata for config file")
+                    .unwrap()
+                    .modified()
+                    .unwrap_or(SystemTime::now());
+
+                if file_last_changed > last_changed {
+                    break file_last_changed;
+                }
+                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+            }
+        })
+        .await
+        .expect("failed to resolve once modified, this should never happen")
+    }
+
+    async fn update_db_to_file_content(&mut self, db: &Database) -> AppResult<()> {
+        let conn = db.get()?;
+
+        let users_is_empty = conn
+            .call(|conn| {
+                Ok(conn
+                    .query_row_get("SELECT COUNT(*) FROM users", [])
+                    .map(|count: i64| count == 0)
+                    .unwrap_or(false))
+            })
+            .await?;
+        let admin = self.admin().await;
+        let (username, pw) = (admin.username.clone(), admin.password.clone());
+        let password = tokio::task::spawn_blocking(|| password_auth::generate_hash(pw))
+            .await
+            .expect("generating the password shouldn't fail");
+
+        let last_admin = self.last_admin.clone();
+        let (last_username, pw) = (last_admin.username, last_admin.password);
+        let last_password = tokio::task::spawn_blocking(|| password_auth::generate_hash(pw))
+            .await
+            .expect("generating the password shouldn't fail");
+
+        if (&username, &password) == (&last_username, &last_password) && !users_is_empty {
+            return Ok(());
+        } else {
+            self.last_admin = admin;
+        }
+
+        // TODO: Once more permission are there, make this remove any user with these permissions, not last_admin and insert this new one. The file is the source of truth
+        if !users_is_empty {
+            conn.call(|conn| {
+                conn.execute("DELETE FROM users WHERE username = ?1", [last_username])
+                    .convert_err()
+            })
+            .await
+            .log_err_with_msg("Failed to remove last admin, there might be multiple users now");
+        }
+
+        conn.call(|conn| {
+            conn.execute(
+                "INSERT INTO users (username, password) VALUES (?1, ?2)",
+                [username, password],
+            )
+            .convert_err()
+        })
+        .await?;
+
+        Ok(())
+    }
+
+    async fn inner(&self) -> ConfigFile {
+        self.inner.read().await.clone()
+    }
+
+    async fn set_inner(&self, config: ConfigFile) {
+        *self.inner.write().await = config;
+    }
+
+    pub async fn port(&self) -> u16 {
+        self.inner.read().await.port
+    }
+
+    async fn admin(&self) -> AdminCredentials {
+        self.inner.read().await.admin.clone()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigFile {
+    port: u16,
+    admin: AdminCredentials,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdminCredentials {
+    username: String,
+    password: String,
+}
+
+impl Default for ConfigFile {
+    fn default() -> Self {
+        Self {
+            port: 3000,
+            admin: Default::default(),
+        }
+    }
+}
+
+impl Default for AdminCredentials {
+    fn default() -> Self {
+        Self {
+            // The username is static for now, file changes don't affect it
+            username: "admin".to_owned(),
+            password: "admin".to_owned(),
+        }
+    }
+}

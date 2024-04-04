@@ -71,7 +71,7 @@ async fn main() {
 
     let auth = AuthManagerLayerBuilder::new(session_store, session_layer).build();
 
-    let (state, cancel) = AppState::new(db.clone());
+    let (state, cancel, port) = AppState::new(db.clone()).await;
 
     let app = Router::new()
         .merge(tracing_layer())
@@ -89,9 +89,11 @@ async fn main() {
         .with_state(state)
         .layer(auth);
 
-    let ip = "0.0.0.0:3000";
+    let ip = format!("0.0.0.0:{port}");
 
-    let listener = TcpListener::bind(ip).await.expect("failed to bind to port");
+    let listener = TcpListener::bind(&ip)
+        .await
+        .expect("failed to bind to port");
 
     info!("Starting server on {ip}");
 

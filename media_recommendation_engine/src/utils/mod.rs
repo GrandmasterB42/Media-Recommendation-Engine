@@ -17,6 +17,9 @@ pub use auth::{login_required, AuthSession, Credentials};
 
 pub mod templates;
 
+mod settings;
+pub use settings::ServerSettings;
+
 macro_rules! relative {
     ($path:expr) => {
         if cfg!(windows) {

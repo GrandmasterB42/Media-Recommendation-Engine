@@ -3,27 +3,32 @@ use std::{error::Error, fmt::Display, ops::Deref};
 use axum::{extract::FromRef, http, response::IntoResponse};
 use tokio_util::sync::CancellationToken;
 
-use crate::{database::Database, routes::StreamingSessions};
+use crate::{database::Database, routes::StreamingSessions, utils::ServerSettings};
 
 #[derive(Clone)]
 pub struct AppState {
     database: Database,
     streaming_sessions: StreamingSessions,
     cancellation: Cancellation,
+    serversettings: ServerSettings,
 }
 
 impl AppState {
-    pub fn new(database: Database) -> (Self, Cancellation) {
+    pub async fn new(database: Database) -> (Self, Cancellation, u16) {
         let streaming_sessions = StreamingSessions::new();
         let cancel = Cancellation(CancellationToken::new());
         let cancellation = cancel.clone();
+        let serversettings = ServerSettings::new(cancel.clone(), database.clone()).await;
+        let port = serversettings.port().await;
         (
             Self {
                 database,
                 streaming_sessions,
                 cancellation,
+                serversettings,
             },
             cancel,
+            port,
         )
     }
 }
@@ -43,6 +48,12 @@ impl FromRef<AppState> for StreamingSessions {
 impl FromRef<AppState> for Cancellation {
     fn from_ref(state: &AppState) -> Cancellation {
         state.cancellation.clone()
+    }
+}
+
+impl FromRef<AppState> for ServerSettings {
+    fn from_ref(state: &AppState) -> ServerSettings {
+        state.serversettings.clone()
     }
 }
 
