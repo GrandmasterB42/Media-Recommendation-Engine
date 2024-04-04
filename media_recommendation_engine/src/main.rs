@@ -71,7 +71,7 @@ async fn main() {
 
     let auth = AuthManagerLayerBuilder::new(session_store, session_layer).build();
 
-    let (state, cancel, port) = AppState::new(db.clone()).await;
+    let (state, cancel, settings) = AppState::new(db.clone()).await;
 
     let app = Router::new()
         .merge(tracing_layer())
@@ -89,6 +89,7 @@ async fn main() {
         .with_state(state)
         .layer(auth);
 
+    let port = settings.port().await;
     let ip = format!("0.0.0.0:{port}");
 
     let listener = TcpListener::bind(&ip)

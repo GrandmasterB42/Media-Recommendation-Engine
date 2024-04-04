@@ -9,20 +9,21 @@ use tokio::{
     io::AsyncWriteExt,
     sync::{
         watch::{self, Receiver, Sender},
-        RwLock,
+        Mutex, RwLock,
     },
 };
 use tracing::{debug, error, warn};
 
 use super::{ConvertErr, HandleErr};
 
+pub type ServerConfig = Arc<RwLock<ConfigFile>>;
+
 #[derive(Clone)]
 pub struct ServerSettings {
-    inner: Arc<RwLock<ConfigFile>>,
+    pub inner: ServerConfig,
     // For now this just indicates whether something has changed, not what (used in the future for web interface setting changes)
     changed: Arc<(Sender<()>, Receiver<()>)>,
-    last_changed: SystemTime,
-    last_admin: AdminCredentials,
+    last_admin: Arc<Mutex<AdminCredentials>>,
 }
 
 impl ServerSettings {
@@ -50,18 +51,11 @@ impl ServerSettings {
 
         let recv = change.1.clone();
 
-        let last_changed = tokio::fs::metadata(Self::PATH)
-            .await
-            .unwrap()
-            .modified()
-            .unwrap_or(SystemTime::now());
+        let last_admin = Arc::new(Mutex::new(config.admin.clone()));
 
-        let last_admin = config.admin.clone();
-
-        let mut data = Self {
+        let data = Self {
             inner: Arc::new(RwLock::new(config)),
             changed: Arc::new(change),
-            last_changed,
             last_admin,
         };
 
@@ -69,17 +63,26 @@ impl ServerSettings {
             .await
             .log_warn_with_msg("failed to change database in accordance with config file");
 
-        tokio::spawn(Self::watch_file(data.clone(), cancel, db, recv));
+        let cloned_settings = data.clone();
+        tokio::spawn(async move {
+            Self::watch_file(&cloned_settings, cancel, db, recv).await;
+        });
 
         data
     }
 
-    async fn watch_file(mut self, cancel: Cancellation, db: Database, mut change: Receiver<()>) {
+    async fn watch_file(&self, cancel: Cancellation, db: Database, mut change: Receiver<()>) {
+        let mut last_changed = tokio::fs::metadata(Self::PATH)
+            .await
+            .unwrap()
+            .modified()
+            .unwrap_or(SystemTime::now());
+
         let mut update_file = false;
         loop {
             if !Path::new(Self::PATH).exists() {
                 warn!("Config file does not exist, trying to create one.");
-                Self::create_config_file(&self.inner().await).await;
+                Self::create_config_file(&self.config_cloned().await).await;
             }
 
             if update_file {
@@ -89,13 +92,13 @@ impl ServerSettings {
                 {
                     Some(file) => file,
                     None => {
-                        let config = self.inner().await;
+                        let config = self.config_cloned().await;
                         Self::create_config_file(&config).await;
                         continue;
                     }
                 };
 
-                let server_side = self.inner().await;
+                let server_side = self.config_cloned().await;
                 let toml_repr = toml::to_string_pretty(&server_side)
                     .expect("failed to serialize config, this should never happen");
 
@@ -122,24 +125,29 @@ impl ServerSettings {
                         "Failed to parse config file, using the default config instead",
                     )
                     .unwrap_or_default();
-                self.set_inner(config).await;
+
+                self.config_modifiable()
+                    .await
+                    .write()
+                    .await
+                    .clone_from(&config);
             }
 
             self.update_db_to_file_content(&db)
                 .await
                 .log_warn_with_msg("failed to change database in accordance with config file");
 
-            let (should_stop, u_f, last_changed) = tokio::select! {
+            let (should_stop, u_f, l_c) = tokio::select! {
                 _ = change.changed() => {
-                    (false, true, self.last_changed)
+                    (false, true, last_changed)
                 },
-                last = Self::resolve_once_modified(self.last_changed) => {
+                last = Self::resolve_once_modified(last_changed) => {
                     debug!("Registered config file change");
                     (false, false, last)
                 },
-                _ = cancel.cancelled() => (true, false, self.last_changed),
+                _ = cancel.cancelled() => (true, false, last_changed),
             };
-            self.last_changed = last_changed;
+            last_changed = l_c;
             update_file = u_f;
 
             if should_stop {
@@ -181,7 +189,7 @@ impl ServerSettings {
         .expect("failed to resolve once modified, this should never happen")
     }
 
-    async fn update_db_to_file_content(&mut self, db: &Database) -> AppResult<()> {
+    async fn update_db_to_file_content(&self, db: &Database) -> AppResult<()> {
         let conn = db.get()?;
 
         let users_is_empty = conn
@@ -198,8 +206,9 @@ impl ServerSettings {
             .await
             .expect("generating the password shouldn't fail");
 
-        let last_admin = self.last_admin.clone();
-        let (last_username, pw) = (last_admin.username, last_admin.password);
+        let mut last_admin = self.last_admin.lock().await;
+
+        let (last_username, pw) = (last_admin.username.clone(), last_admin.password.clone());
         let last_password = tokio::task::spawn_blocking(|| password_auth::generate_hash(pw))
             .await
             .expect("generating the password shouldn't fail");
@@ -207,8 +216,9 @@ impl ServerSettings {
         if (&username, &password) == (&last_username, &last_password) && !users_is_empty {
             return Ok(());
         } else {
-            self.last_admin = admin;
+            *last_admin = admin;
         }
+        drop(last_admin);
 
         // TODO: Once more permission are there, make this remove any user with these permissions, not last_admin and insert this new one. The file is the source of truth
         if !users_is_empty {
@@ -232,20 +242,24 @@ impl ServerSettings {
         Ok(())
     }
 
-    async fn inner(&self) -> ConfigFile {
+    #[inline(always)]
+    pub async fn config_modifiable(&self) -> ServerConfig {
+        self.inner.clone()
+    }
+
+    #[inline(always)]
+    pub async fn config_cloned(&self) -> ConfigFile {
         self.inner.read().await.clone()
     }
 
-    async fn set_inner(&self, config: ConfigFile) {
-        *self.inner.write().await = config;
-    }
-
+    #[inline(always)]
     pub async fn port(&self) -> u16 {
-        self.inner.read().await.port
+        self.config_modifiable().await.read().await.port
     }
 
-    async fn admin(&self) -> AdminCredentials {
-        self.inner.read().await.admin.clone()
+    #[inline(always)]
+    pub async fn admin(&self) -> AdminCredentials {
+        self.config_modifiable().await.read().await.admin.clone()
     }
 }
 
