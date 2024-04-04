@@ -9,7 +9,7 @@ use tokio::{
     io::AsyncWriteExt,
     sync::{
         watch::{self, Receiver, Sender},
-        Mutex, RwLock,
+        RwLock,
     },
 };
 use tracing::{debug, error, warn};
@@ -23,7 +23,6 @@ pub struct ServerSettings {
     pub inner: ServerConfig,
     // For now this just indicates whether something has changed, not what (used in the future for web interface setting changes)
     changed: Arc<(Sender<()>, Receiver<()>)>,
-    last_admin: Arc<Mutex<AdminCredentials>>,
 }
 
 impl ServerSettings {
@@ -51,15 +50,13 @@ impl ServerSettings {
 
         let recv = change.1.clone();
 
-        let last_admin = Arc::new(Mutex::new(config.admin.clone()));
-
         let data = Self {
             inner: Arc::new(RwLock::new(config)),
             changed: Arc::new(change),
-            last_admin,
         };
 
-        data.update_db_to_file_content(&db)
+        let mut last_admin = data.admin().await;
+        data.update_db_to_file_content(&db, &mut last_admin)
             .await
             .log_warn_with_msg("failed to change database in accordance with config file");
 
@@ -77,6 +74,8 @@ impl ServerSettings {
             .unwrap()
             .modified()
             .unwrap_or(SystemTime::now());
+
+        let mut last_admin = self.admin().await;
 
         let mut update_file = false;
         loop {
@@ -133,7 +132,7 @@ impl ServerSettings {
                     .clone_from(&config);
             }
 
-            self.update_db_to_file_content(&db)
+            self.update_db_to_file_content(&db, &mut last_admin)
                 .await
                 .log_warn_with_msg("failed to change database in accordance with config file");
 
@@ -189,7 +188,11 @@ impl ServerSettings {
         .expect("failed to resolve once modified, this should never happen")
     }
 
-    async fn update_db_to_file_content(&self, db: &Database) -> AppResult<()> {
+    async fn update_db_to_file_content(
+        &self,
+        db: &Database,
+        last_admin: &mut AdminCredentials,
+    ) -> AppResult<()> {
         let conn = db.get()?;
 
         let users_is_empty = conn
@@ -206,8 +209,6 @@ impl ServerSettings {
             .await
             .expect("generating the password shouldn't fail");
 
-        let mut last_admin = self.last_admin.lock().await;
-
         let (last_username, pw) = (last_admin.username.clone(), last_admin.password.clone());
         let last_password = tokio::task::spawn_blocking(|| password_auth::generate_hash(pw))
             .await
@@ -218,7 +219,6 @@ impl ServerSettings {
         } else {
             *last_admin = admin;
         }
-        drop(last_admin);
 
         // TODO: Once more permission are there, make this remove any user with these permissions, not last_admin and insert this new one. The file is the source of truth
         if !users_is_empty {
@@ -243,7 +243,8 @@ impl ServerSettings {
     }
 
     #[inline(always)]
-    pub async fn config_modifiable(&self) -> ServerConfig {
+    /// When this is used, there has to be a send into the change channel to make the system repsond
+    async fn config_modifiable(&self) -> ServerConfig {
         self.inner.clone()
     }
 
