@@ -67,10 +67,9 @@ impl Database {
         // Note: Use Pool::builder() for more configuration options.
         let pool = Pool::new(ConnectionManager)?;
         let connection = pool.get()?;
-        // TODO: db_init failing is bad, something should probably happen here
-        db_init(&connection)
-            .await
-            .log_err_with_msg("Failed to initialize database");
+        db_init(&connection).await.expect(
+            "Database initialization failed, when this happens something has gone horribly wrong",
+        );
         Ok(Self(pool))
     }
 }
