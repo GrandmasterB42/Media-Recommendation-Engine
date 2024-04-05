@@ -1,7 +1,6 @@
 use std::{
     ffi::OsStr,
     path::{Component, Path, PathBuf},
-    time::Duration,
 };
 
 use itertools::Itertools;
@@ -11,20 +10,18 @@ use tracing::{debug, info, warn};
 use crate::{
     database::{Database, QueryRowGetConnExt, QueryRowGetStmtExt, QueryRowIntoConnExt},
     state::AppResult,
-    utils::{HandleErr, Ignore, ParseBetween, ParseUntil},
+    utils::{HandleErr, Ignore, ParseBetween, ParseUntil, ServerSettings},
 };
 
-pub async fn periodic_indexing(db: Database) -> ! {
+pub async fn periodic_indexing(db: Database, settings: ServerSettings) -> ! {
     loop {
-        // TODO: Handle this error better?
         let conn = db
             .get()
             .expect("Failed to get database connection for indexing");
         conn.call(|conn| Ok(indexing(conn).log_err_with_msg("Failed the indexing")))
             .await
             .log_err_with_msg("failed to index");
-        // TODO: Setting for this duration?
-        tokio::time::sleep(Duration::from_secs(60 * 5)).await;
+        settings.wait_configured_time().await;
     }
 }
 

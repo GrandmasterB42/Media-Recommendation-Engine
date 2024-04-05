@@ -12,7 +12,7 @@ use tokio::{
         RwLock,
     },
 };
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 use super::{ConvertErr, HandleErr};
 
@@ -22,7 +22,8 @@ pub type ServerConfig = Arc<RwLock<ConfigFile>>;
 pub struct ServerSettings {
     pub inner: ServerConfig,
     // For now this just indicates whether something has changed, not what (used in the future for web interface setting changes)
-    changed: Arc<(Sender<()>, Receiver<()>)>,
+    changed: Arc<Sender<()>>,
+    abort_wait: Arc<Sender<f64>>,
 }
 
 impl ServerSettings {
@@ -48,11 +49,16 @@ impl ServerSettings {
 
         let change = watch::channel(());
 
-        let recv = change.1.clone();
+        let send = change.0;
+        let recv = change.1;
+
+        let (waiting, r) = watch::channel(0.);
+        Box::leak(Box::new(r)); // Leaking the receiver so the channel is only closed when the program ends
 
         let data = Self {
             inner: Arc::new(RwLock::new(config)),
-            changed: Arc::new(change),
+            changed: Arc::new(send),
+            abort_wait: Arc::new(waiting),
         };
 
         let mut last_admin = data.admin().await;
@@ -76,6 +82,7 @@ impl ServerSettings {
             .unwrap_or(SystemTime::now());
 
         let mut last_admin = self.admin().await;
+        let mut last_wait = self.index_wait().await;
 
         let mut update_file = false;
         loop {
@@ -136,6 +143,17 @@ impl ServerSettings {
                 .await
                 .log_warn_with_msg("failed to change database in accordance with config file");
 
+            let current_wait = self.index_wait().await;
+            if last_wait != current_wait && current_wait > 0. {
+                last_wait = current_wait;
+                self.abort_wait
+                    .send(current_wait)
+                    .expect("This channel should live for the entire porgram");
+            } else if current_wait <= 0. {
+                // TODO: Make 0 indicate directory watching is enabled instead of wait time
+                warn!("Indexing wait time is 0 or less, this is not allowed");
+            }
+
             let (should_stop, u_f, l_c) = tokio::select! {
                 _ = change.changed() => {
                     (false, true, last_changed)
@@ -186,6 +204,16 @@ impl ServerSettings {
         })
         .await
         .expect("failed to resolve once modified, this should never happen")
+    }
+
+    pub async fn wait_configured_time(&self) {
+        let mut recv = self.abort_wait.subscribe();
+        tokio::select! {
+            _ = recv.changed() => {
+                info!("changed indexing waiting time to {} seconds and started indexing again", *recv.borrow());
+            },
+            _ = tokio::time::sleep(tokio::time::Duration::from_secs_f64(self.index_wait().await)) => {},
+        }
     }
 
     async fn update_db_to_file_content(
@@ -259,6 +287,11 @@ impl ServerSettings {
     }
 
     #[inline(always)]
+    pub async fn index_wait(&self) -> f64 {
+        self.config_modifiable().await.read().await.index_wait
+    }
+
+    #[inline(always)]
     pub async fn admin(&self) -> AdminCredentials {
         self.config_modifiable().await.read().await.admin.clone()
     }
@@ -267,6 +300,7 @@ impl ServerSettings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigFile {
     port: u16,
+    index_wait: f64,
     admin: AdminCredentials,
 }
 
@@ -280,6 +314,7 @@ impl Default for ConfigFile {
     fn default() -> Self {
         Self {
             port: 3000,
+            index_wait: 300.,
             admin: Default::default(),
         }
     }

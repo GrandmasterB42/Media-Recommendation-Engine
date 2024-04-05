@@ -98,7 +98,7 @@ async fn main() {
 
     info!("Starting server on {ip}");
 
-    let indexing = tokio::spawn(periodic_indexing(db));
+    let indexing = tokio::spawn(periodic_indexing(db, settings));
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown(indexing, cancel))
