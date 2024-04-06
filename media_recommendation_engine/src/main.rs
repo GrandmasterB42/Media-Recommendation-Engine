@@ -49,7 +49,7 @@ async fn main() {
             .log_warn_with_msg("failed to delete shm");
     } else if args.len() > 1 {
         let args = &args[1..];
-        warn!("provided invalid arguments: \"{args:?}\"")
+        warn!("provided invalid arguments: \"{args:?}\"");
     }
 
     let db = Database::new()

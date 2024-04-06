@@ -191,7 +191,7 @@ impl Session {
         *self.state.lock().await = state;
     }
 
-    async fn update_timekeeper(&self, time: f64, state: &SessionState) {
+    async fn update_timekeeper(&self, time: f64, state: SessionState) {
         let mut timekeeper = self.time_estimate.lock().await;
         timekeeper.update(time, state);
     }
@@ -223,7 +223,7 @@ impl TimeKeeper {
         }
     }
 
-    fn update(&mut self, time: f64, state: &SessionState) {
+    fn update(&mut self, time: f64, state: SessionState) {
         self.currently_playing = match state {
             SessionState::Paused => false,
             SessionState::Playing => true,
@@ -572,7 +572,7 @@ async fn handle_client_message(
         WSMessage::Update {
             ref message_type,
             ref video_time,
-            ref state,
+            state,
             ..
         } => 'update_block: {
             session.update_timekeeper(*video_time as f64, state).await;
@@ -723,7 +723,7 @@ async fn notifier(
         let seek = seek_queue.get_and_reset(NOTIFICATION_DELAY);
         let toggle = toggle_queue.get_and_reset(NOTIFICATION_DELAY);
 
-        for notification in [seek, toggle].iter() {
+        for notification in &[seek, toggle] {
             let Some(notification) = notification else {
                 continue;
             };

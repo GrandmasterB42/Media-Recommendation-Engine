@@ -10,7 +10,7 @@ use tracing::info;
 
 use crate::{
     state::{AppError, AppResult},
-    utils::{ConvertErr, HandleErr},
+    utils::ConvertErr,
 };
 
 pub struct ConnectionManager;

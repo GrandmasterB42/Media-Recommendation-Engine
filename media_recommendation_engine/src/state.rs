@@ -83,12 +83,12 @@ pub enum AppError {
 impl Display for AppError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self {
-            AppError::Database(e) => write!(f, "Database Error: {}", e),
-            AppError::DatabaseAsync(e) => write!(f, "Database Error: {}", e),
-            AppError::Pool(e) => write!(f, "Pool Error: {}", e),
-            AppError::Templating(e) => write!(f, "Templating Error: {}", e),
-            AppError::ffmpeg(e) => write!(f, "ffmpeg Error: {}", e),
-            AppError::Custom(e) => write!(f, "Custom Error: {}", e),
+            AppError::Database(e) => write!(f, "Database Error: {e}"),
+            AppError::DatabaseAsync(e) => write!(f, "Database Error: {e}"),
+            AppError::Pool(e) => write!(f, "Pool Error: {e}"),
+            AppError::Templating(e) => write!(f, "Templating Error: {e}"),
+            AppError::ffmpeg(e) => write!(f, "ffmpeg Error: {e}"),
+            AppError::Custom(e) => write!(f, "Custom Error: {e}"),
         }
     }
 }

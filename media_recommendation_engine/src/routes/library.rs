@@ -64,7 +64,7 @@ async fn get_sessions(State(sessions): State<StreamingSessions>) -> AppResult<im
     render_sessions(sessions)
         .await
         .iter()
-        .map(|el| el.render())
+        .map(Template::render)
         .collect::<Result<String, _>>()
         .convert_err()
 }

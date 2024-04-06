@@ -30,17 +30,16 @@ impl ServerSettings {
     const PATH: &'static str = "mreconfig.toml";
 
     pub async fn new(cancel: Cancellation, db: Database) -> Self {
-        let config_file = match tokio::fs::read_to_string(Self::PATH)
+        let config_file = if let Some(config_file) = tokio::fs::read_to_string(Self::PATH)
             .await
             .log_warn_with_msg("Failed to create config file, trying to create a new one")
         {
-            Some(config_file) => config_file,
-            None => {
-                let default = ConfigFile::default();
-                Self::create_config_file(&default).await;
-                toml::to_string_pretty(&default)
-                    .expect("failed to serialize default config after it should have been created, this should never happen")
-            }
+            config_file
+        } else {
+            let default = ConfigFile::default();
+            Self::create_config_file(&default).await;
+            toml::to_string_pretty(&default)
+                .expect("failed to serialize default config after it should have been created, this should never happen")
         };
 
         let config: ConfigFile = toml::from_str(&config_file)
@@ -92,16 +91,13 @@ impl ServerSettings {
             }
 
             if update_file {
-                let mut file = match tokio::fs::File::open(Self::PATH)
+                let Some(mut file) = tokio::fs::File::open(Self::PATH)
                     .await
                     .log_err_with_msg("Failed to open config file, trying to create a new one")
-                {
-                    Some(file) => file,
-                    None => {
-                        let config = self.config_cloned().await;
-                        Self::create_config_file(&config).await;
-                        continue;
-                    }
+                else {
+                    let config = self.config_cloned().await;
+                    Self::create_config_file(&config).await;
+                    continue;
                 };
 
                 let server_side = self.config_cloned().await;
@@ -132,11 +128,7 @@ impl ServerSettings {
                     )
                     .unwrap_or_default();
 
-                self.config_modifiable()
-                    .await
-                    .write()
-                    .await
-                    .clone_from(&config);
+                self.config_modifiable().write().await.clone_from(&config);
             }
 
             self.update_db_to_file_content(&db, &mut last_admin)
@@ -144,7 +136,7 @@ impl ServerSettings {
                 .log_warn_with_msg("failed to change database in accordance with config file");
 
             let current_wait = self.index_wait().await;
-            if last_wait != current_wait && current_wait > 0. {
+            if (last_wait - current_wait).abs() > f64::EPSILON && current_wait > 0. {
                 last_wait = current_wait;
                 self.abort_wait
                     .send(current_wait)
@@ -244,9 +236,8 @@ impl ServerSettings {
 
         if (&username, &password) == (&last_username, &last_password) && !users_is_empty {
             return Ok(());
-        } else {
-            *last_admin = admin;
         }
+        *last_admin = admin;
 
         // TODO: Once more permission are there, make this remove any user with these permissions, not last_admin and insert this new one. The file is the source of truth
         if !users_is_empty {
@@ -270,30 +261,25 @@ impl ServerSettings {
         Ok(())
     }
 
-    #[inline(always)]
     /// When this is used, there has to be a send into the change channel to make the system repsond
-    async fn config_modifiable(&self) -> ServerConfig {
+    fn config_modifiable(&self) -> ServerConfig {
         self.inner.clone()
     }
 
-    #[inline(always)]
     pub async fn config_cloned(&self) -> ConfigFile {
         self.inner.read().await.clone()
     }
 
-    #[inline(always)]
     pub async fn port(&self) -> u16 {
-        self.config_modifiable().await.read().await.port
+        self.config_modifiable().read().await.port
     }
 
-    #[inline(always)]
     pub async fn index_wait(&self) -> f64 {
-        self.config_modifiable().await.read().await.index_wait
+        self.config_modifiable().read().await.index_wait
     }
 
-    #[inline(always)]
     pub async fn admin(&self) -> AdminCredentials {
-        self.config_modifiable().await.read().await.admin.clone()
+        self.config_modifiable().read().await.admin.clone()
     }
 }
 
@@ -315,7 +301,7 @@ impl Default for ConfigFile {
         Self {
             port: 3000,
             index_wait: 300.,
-            admin: Default::default(),
+            admin: AdminCredentials::default(),
         }
     }
 }

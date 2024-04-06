@@ -66,13 +66,13 @@ async fn login_page(Query(params): Query<Params>) -> AppResult<impl IntoResponse
         title: "Login",
         post_url,
         sub_text: None,
-        message: message.map(|m| m.to_owned()),
+        message,
     };
     let body = login_page.render()?;
 
     Ok(Index {
         body,
-        all: "".to_owned(),
+        all: String::new(),
     })
 }
 
