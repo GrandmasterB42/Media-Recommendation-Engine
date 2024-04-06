@@ -1,46 +1,21 @@
 .main_title {
     color: #999;
-    position: absolute;
-    left: 0.5%;
-    text-align: left;
     width: 20%;
-    vertical-align: middle;
-    margin: 0;
 }
 
 .heading_box {
-    justify-content: center;
-    align-content: center;
-    text-align: center;
+    position: sticky;
     display: flex;
-}
-
-.logout_container {
-    display: inline-block;
-    position: absolute;
-    right: 0.5%;
-    margin: 20px 0;
-
-
+    justify-content: space-between;
+    align-items: center;
+    top: 0px;
+    background-color: #1a1a1a;
+    z-index: 100;
 }
 
 .center_container {
-    display: inline-block;
+    display: flex;
     margin: 20px;
-}
-
-#logout-label {
-    background-color: #fd5050;
-    color: #f2f2f2;
-    border: none;
-    padding: 10px 20px;
-    border-radius: 5px;
-    cursor: pointer;
-}
-
-.hidden {
-    display: none;
-
 }
 
 input[type="radio"] {
@@ -49,13 +24,86 @@ input[type="radio"] {
 
 input[type="radio"]+label {
     padding: 10px 20px;
-    color: #333;
+    background-color: #323232; 
     color: #f2f2f2;
     border-radius: 5px;
     transition: background-color 0.3s ease;
+    margin: 4px;
 }
 
 input[type="radio"]:checked+label {
     background-color: #999;
     color: #f2f2f2;
+}
+
+.hidden {
+    display: none;
+}
+
+.dropdown {
+    width: 20%;
+    text-align: right;
+}
+
+.dropbtn-label {
+    font-size: 40px;
+    border-radius: 2px;
+}
+
+.dropbtn-label:hover {
+    background-color: #323232;
+}
+
+#dropbtn:checked~.dropdown-content {
+    display: flex;
+}
+
+#dropbtn:checked~.dropbtn-label {
+    background-color: #999;
+}
+
+.dropdown-content {
+    list-style: none;
+    display: none;
+    flex-direction: column;
+    float: right;
+    border-radius: 7px;
+    row-gap: 15px;
+    background-color: #3f3f3f;
+    position: fixed;
+    right: 8px;
+    padding: 10px;
+    font-size: 20px;
+}
+
+.dropdown-element {
+    padding: 5px 10px;
+    border-radius: 5px;
+    cursor: pointer;
+    display: flex;
+    justify-content: left;
+}
+
+.dropdown-label {
+    color: #f2f2f2;
+    font-size: inherit;
+    padding-left: 10px;
+    display: flex;
+    align-items: flex-end
+}
+
+#settings-element {
+    background-color: #999;
+}
+
+#settings-element:hover {
+    background-color: #7f7f7f;
+}
+
+#logout-element {
+    background-color: #c92727;
+}
+
+#logout-element:hover {
+    background-color: #a71d1d;
 }

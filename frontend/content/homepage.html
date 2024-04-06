@@ -7,13 +7,20 @@
 
         <input id="radioExp" type="radio" name="section" {{redirect_explore|safe}}>
         <label for="radioExp"> Explore </label>
-
-        <input id="radioSet" type="radio" name="section">
-        <label for="radioSet" {{redirect_settings|safe}}> Settings </label>
     </div>
-    <div class="logout_container">
-        <input id="logout" class="hidden" type="button" title="logout" hx-get="/auth/logout">
-        <label id="logout-label" for="logout"> Logout </label>
+    <div class="dropdown">
+        <input id="dropbtn" type="checkbox" class="hidden" title="dropbtn">
+        <label id="dropbtn-label" for="dropbtn" class="dropbtn-label"> &#x2630; </label>
+        <ul class="dropdown-content">
+            <li id="settings-element" class="dropdown-element" {{redirect_settings|safe}}>
+                <img src="/icons/settings.svg" />
+                <label id="settings-label" class="dropdown-label"> Settings  </label>
+            </li>
+            <li id="logout-element" class="dropdown-element" hx-get="/auth/logout">
+                <img src="/icons/logout.svg" />
+                <label id="logout-label" class="dropdown-label"> Logout </label>
+            </li>
+        </ul>
     </div>
 </div>
 <div id={{content}} hx-trigger="load" hx-get={{route}}> </div>
