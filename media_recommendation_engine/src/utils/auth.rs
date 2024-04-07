@@ -3,7 +3,7 @@ use std::{collections::HashSet, ops::Deref};
 use axum::{
     async_trait,
     body::Body,
-    extract::Request,
+    extract::{OriginalUri, Request},
     http::{HeaderMap, Response, StatusCode},
     middleware::Next,
     response::IntoResponse,
@@ -189,7 +189,7 @@ impl AuthzBackend for Database {
         let user = user.clone();
 
         let permissions = conn.prepare(
-                "SELECT DISTINCT permissions.name FROM users, permission, user_permissions WHERE users.id = ?1 AND users.id = user_permissions.userid AND user_permissions.permissionid = permissions.id",
+                "SELECT DISTINCT permissions.name FROM users, permissions, user_permissions WHERE users.id = ?1 AND users.id = user_permissions.userid AND user_permissions.permissionid = permissions.id",
             )?
                 .query_map_into([user.id])?
                 .collect::<Result<HashSet<_>, _>>()?;
@@ -204,7 +204,7 @@ impl AuthzBackend for Database {
         let user = user.clone();
 
         let permissions = conn.prepare(
-                "SELECT DISTINCT permissions.name FROM users, groups, permission, user_groups, group_permissions WHERE users.id = ?1 AND users.id = user_groups.userid AND user_groups.groupid = groups.id AND groups.id = group_permissions.groupid AND group_permissions.permissionid = permissions.id"
+                "SELECT DISTINCT permissions.name FROM users, groups, permissions, user_groups, group_permissions WHERE users.id = ?1 AND users.id = user_groups.userid AND user_groups.groupid = groups.id AND groups.id = group_permissions.groupid AND group_permissions.permissionid = permissions.id"
             )?
                 .query_map_into([user.id])?
                 .collect::<Result<HashSet<_>, _>>()?;
@@ -335,31 +335,31 @@ impl ExpiredDeletion for Database {
 pub async fn login_required(
     auth: AuthSession,
     hm: HeaderMap,
+    OriginalUri(uri): OriginalUri,
     request: Request,
     next: Next,
 ) -> Response<Body> {
     if auth.user.is_some() {
         return next.run(request).await.into_response();
     }
-
-    let current = hm.get("HX-Current-Url");
-    let complete = current
-        .and_then(|current| current.to_str().ok())
-        .unwrap_or_default();
-    let path = complete
-        .split_once("//")
-        .unwrap_or(("", ""))
-        .1
-        .split_once('/')
-        .unwrap_or(("", ""))
-        .1;
-
     let htmx_enabled = hm.get("HX-Request").is_some();
-    let redirect = format!("/auth/login?next=/{path}");
 
     if htmx_enabled {
+        let current = hm.get("HX-Current-Url");
+        let complete = current
+            .and_then(|current| current.to_str().ok())
+            .unwrap_or_default();
+        let path = complete
+            .split_once("//")
+            .unwrap_or(("", ""))
+            .1
+            .split_once('/')
+            .unwrap_or(("", ""))
+            .1;
+        let redirect = format!("/auth/login?next=/{path}");
         (StatusCode::UNAUTHORIZED, [("HX-Redirect", redirect)]).into_response()
     } else {
+        let redirect = format!("/auth/login?next={uri}");
         (StatusCode::SEE_OTHER, [("Location", redirect)]).into_response()
     }
 }
