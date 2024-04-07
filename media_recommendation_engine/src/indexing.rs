@@ -18,9 +18,11 @@ pub async fn periodic_indexing(db: Database, settings: ServerSettings) -> ! {
         let conn = db
             .get()
             .expect("Failed to get database connection for indexing");
-        conn.call(|conn| Ok(indexing(conn).log_err_with_msg("Failed the indexing")))
-            .await
-            .log_err_with_msg("failed to index");
+
+        tokio::task::spawn_blocking(move || {
+            indexing(&conn).log_err_with_msg("Failed the indexing")
+        });
+
         settings.wait_configured_time().await;
     }
 }

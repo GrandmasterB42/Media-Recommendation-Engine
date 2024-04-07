@@ -10,14 +10,10 @@ use crate::{
 
 impl RecommendationPopup {
     pub async fn new(db: Database, video_id: u64) -> AppResult<Self> {
-        // Do some potentially expensive work here
-        let recommendation = tokio::spawn(async move {
+        let recommendation = tokio::task::spawn_blocking(move || {
             let conn = db.get()?;
-            let x = conn
-                .call(move |conn| Ok(Self::recommend(conn, video_id)))
-                .await??;
-            Ok::<Recommendation, AppError>(x)
-        }); // This is supposed to be worked on in the background, but this implementation will change a lot anyway
+            Self::recommend(&conn, video_id)
+        });
 
         let Some(output) = recommendation
             .await

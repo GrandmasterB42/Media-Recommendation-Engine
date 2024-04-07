@@ -37,7 +37,7 @@ use crate::{
     utils::{
         pseudo_random,
         templates::{RecommendationPopup, Video},
-        AuthSession, ConvertErr, HandleErr,
+        AuthSession, HandleErr,
     },
 };
 #[derive(Clone)]
@@ -106,11 +106,7 @@ impl Session {
     ) -> AppResult<Self> {
         let file_path: String = db
             .get()?
-            .call(move |conn| {
-                conn.query_row_get("SELECT path FROM data_files WHERE id=?1", [video_id])
-                    .convert_err()
-            })
-            .await?;
+            .query_row_get("SELECT path FROM data_files WHERE id=?1", [video_id])?;
 
         let stream = ServeFile::new(&file_path);
 
@@ -137,11 +133,7 @@ impl Session {
     async fn reuse(&self, db: &Database, video_id: u64) -> AppResult<()> {
         let file_path: String = db
             .get()?
-            .call(move |conn| {
-                conn.query_row_get("SELECT path FROM data_files WHERE id=?1", [video_id])
-                    .convert_err()
-            })
-            .await?;
+            .query_row_get("SELECT path FROM data_files WHERE id=?1", [video_id])?;
 
         if *self.file_path.lock().await == file_path {
             return Ok(());

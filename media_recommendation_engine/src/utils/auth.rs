@@ -103,8 +103,8 @@ impl From<r2d2::Error> for SessionStoreError {
     }
 }
 
-impl From<tokio_rusqlite::Error> for SessionStoreError {
-    fn from(err: tokio_rusqlite::Error) -> Self {
+impl From<rusqlite::Error> for SessionStoreError {
+    fn from(err: rusqlite::Error) -> Self {
         session_store::Error::Backend(err.to_string()).into()
     }
 }
@@ -134,15 +134,11 @@ impl AuthnBackend for Database {
         let conn = self.get()?;
 
         let user = conn
-            .call(move |conn| {
-                conn.query_row_into::<User>(
-                    "SELECT id, username, password FROM users WHERE username = ?1",
-                    [creds.username],
-                )
-                .optional()
-                .convert_err()
-            })
-            .await?;
+            .query_row_into::<User>(
+                "SELECT id, username, password FROM users WHERE username = ?1",
+                [creds.username],
+            )
+            .optional()?;
 
         tokio::task::spawn_blocking(|| {
             Ok(user.filter(|user| {
@@ -158,15 +154,11 @@ impl AuthnBackend for Database {
 
         let id = *id;
         let user = conn
-            .call(move |conn| {
-                conn.query_row_into::<User>(
-                    "SELECT id, username, password FROM users WHERE id = ?1",
-                    [id],
-                )
-                .optional()
-                .convert_err()
-            })
-            .await?;
+            .query_row_into::<User>(
+                "SELECT id, username, password FROM users WHERE id = ?1",
+                [id],
+            )
+            .optional()?;
 
         Ok(user)
     }
@@ -195,16 +187,13 @@ impl AuthzBackend for Database {
     ) -> Result<HashSet<Self::Permission>, Self::Error> {
         let conn = self.get()?;
         let user = user.clone();
-        conn.call(move |conn: &mut rusqlite::Connection| {
-            let permissions = conn.prepare(
+
+        let permissions = conn.prepare(
                 "SELECT DISTINCT permissions.name FROM users, permission, user_permissions WHERE users.id = ?1 AND users.id = user_permissions.userid AND user_permissions.permissionid = permissions.id",
             )?
                 .query_map_into([user.id])?
                 .collect::<Result<HashSet<_>, _>>()?;
-            Ok(permissions)
-        })
-        .await
-        .convert_err()
+        Ok(permissions)
     }
 
     async fn get_group_permissions(
@@ -213,16 +202,13 @@ impl AuthzBackend for Database {
     ) -> Result<HashSet<Self::Permission>, Self::Error> {
         let conn = self.get()?;
         let user = user.clone();
-        conn.call(move |conn: &mut rusqlite::Connection| {
-            let permissions = conn.prepare(
+
+        let permissions = conn.prepare(
                 "SELECT DISTINCT permissions.name FROM users, groups, permission, user_groups, group_permissions WHERE users.id = ?1 AND users.id = user_groups.userid AND user_groups.groupid = groups.id AND groups.id = group_permissions.groupid AND group_permissions.permissionid = permissions.id"
             )?
                 .query_map_into([user.id])?
                 .collect::<Result<HashSet<_>, _>>()?;
-            Ok(permissions)
-        })
-        .await
-        .convert_err()
+        Ok(permissions)
     }
 }
 
@@ -253,29 +239,22 @@ impl SessionStore for Database {
             let mut record = record.clone();
 
             while {
-                conn.call(move |conn| {
-                    conn.query_row_get::<bool>(
-                        "SELECT exists(SELECT 1 FROM session_store WHERE id = ?1)",
-                        [record.id.to_string()],
-                    )
-                    .convert_err()
-                })
-                .await
+                conn.query_row_get::<bool>(
+                    "SELECT exists(SELECT 1 FROM session_store WHERE id = ?1)",
+                    [record.id.to_string()],
+                )
                 .convert_err::<SessionStoreError>()?
             } {
                 record.id = Id::default();
             }
 
             let record_data = rmp_serde::to_vec(&record).convert_err::<SessionStoreError>()?;
-            conn.call(move |conn| {
-                Ok(save_with_conn(
-                    conn,
-                    record.id.to_string(),
-                    &record_data,
-                    record.expiry_date.unix_timestamp(),
-                )?)
-            })
-            .await
+            save_with_conn(
+                &conn,
+                record.id.to_string(),
+                &record_data,
+                record.expiry_date.unix_timestamp(),
+            )
             .convert_err::<SessionStoreError>()?;
 
             record.id
@@ -289,15 +268,12 @@ impl SessionStore for Database {
 
         let record = record.clone();
         let record_data = rmp_serde::to_vec(&record).convert_err::<SessionStoreError>()?;
-        conn.call(move |conn| {
-            Ok(save_with_conn(
-                conn,
-                record.id.to_string(),
-                &record_data,
-                record.expiry_date.unix_timestamp(),
-            )?)
-        })
-        .await
+        save_with_conn(
+            &conn,
+            record.id.to_string(),
+            &record_data,
+            record.expiry_date.unix_timestamp(),
+        )
         .convert_err::<SessionStoreError>()?;
 
         Ok(())
@@ -308,18 +284,14 @@ impl SessionStore for Database {
 
         let session_id = *session_id;
         let data = conn
-            .call(move |conn| {
-                conn.query_row_get::<Vec<u8>>(
-                    "SELECT data FROM session_store WHERE id = ?1 and expiry_date > ?2",
-                    params![
-                        session_id.to_string(),
-                        OffsetDateTime::now_utc().unix_timestamp()
-                    ],
-                )
-                .optional()
-                .convert_err()
-            })
-            .await
+            .query_row_get::<Vec<u8>>(
+                "SELECT data FROM session_store WHERE id = ?1 and expiry_date > ?2",
+                params![
+                    session_id.to_string(),
+                    OffsetDateTime::now_utc().unix_timestamp()
+                ],
+            )
+            .optional()
             .convert_err::<SessionStoreError>()?;
 
         match data {
@@ -335,14 +307,10 @@ impl SessionStore for Database {
         let conn = self.get().convert_err::<SessionStoreError>()?;
 
         let session_id = *session_id;
-        conn.call(move |conn| {
-            conn.execute(
-                "DELETE FROM session_store WHERE id = ?1",
-                [session_id.to_string()],
-            )
-            .convert_err()
-        })
-        .await
+        conn.execute(
+            "DELETE FROM session_store WHERE id = ?1",
+            [session_id.to_string()],
+        )
         .convert_err::<SessionStoreError>()?;
 
         Ok(())
@@ -354,14 +322,10 @@ impl ExpiredDeletion for Database {
     async fn delete_expired(&self) -> session_store::Result<()> {
         let conn = self.get().convert_err::<SessionStoreError>()?;
 
-        conn.call(move |conn| {
-            conn.execute(
-                "DELETE FROM session_store WHERE expiry_date < ?1",
-                [OffsetDateTime::now_utc().unix_timestamp()],
-            )
-            .convert_err()
-        })
-        .await
+        conn.execute(
+            "DELETE FROM session_store WHERE expiry_date < ?1",
+            [OffsetDateTime::now_utc().unix_timestamp()],
+        )
         .convert_err::<SessionStoreError>()?;
 
         Ok(())

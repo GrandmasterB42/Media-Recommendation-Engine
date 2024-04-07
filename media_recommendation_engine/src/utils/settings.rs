@@ -14,7 +14,7 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
-use super::{ConvertErr, HandleErr};
+use super::HandleErr;
 
 pub type ServerConfig = Arc<RwLock<ConfigFile>>;
 
@@ -216,13 +216,10 @@ impl ServerSettings {
         let conn = db.get()?;
 
         let users_is_empty = conn
-            .call(|conn| {
-                Ok(conn
-                    .query_row_get("SELECT COUNT(*) FROM users", [])
-                    .map(|count: i64| count == 0)
-                    .unwrap_or(false))
-            })
-            .await?;
+            .query_row_get("SELECT COUNT(*) FROM users", [])
+            .map(|count: i64| count == 0)
+            .unwrap_or(false);
+
         let admin = self.admin().await;
         let (username, pw) = (admin.username.clone(), admin.password.clone());
         let password = tokio::task::spawn_blocking(|| password_auth::generate_hash(pw))
@@ -241,22 +238,14 @@ impl ServerSettings {
 
         // TODO: Once more permission are there, make this remove any user with these permissions, not last_admin and insert this new one. The file is the source of truth
         if !users_is_empty {
-            conn.call(|conn| {
-                conn.execute("DELETE FROM users WHERE username = ?1", [last_username])
-                    .convert_err()
-            })
-            .await
-            .log_err_with_msg("Failed to remove last admin, there might be multiple users now");
+            conn.execute("DELETE FROM users WHERE username = ?1", [last_username])
+                .log_err_with_msg("Failed to remove last admin, there might be multiple users now");
         }
 
-        conn.call(|conn| {
-            conn.execute(
-                "INSERT INTO users (username, password) VALUES (?1, ?2)",
-                [username, password],
-            )
-            .convert_err()
-        })
-        .await?;
+        conn.execute(
+            "INSERT INTO users (username, password) VALUES (?1, ?2)",
+            [username, password],
+        )?;
 
         Ok(())
     }

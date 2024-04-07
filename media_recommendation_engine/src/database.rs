@@ -4,8 +4,6 @@ use std::{
 };
 
 use r2d2::{ManageConnection, Pool};
-use tokio::runtime::{Handle, Runtime};
-use tokio_rusqlite::Connection;
 use tracing::info;
 
 use crate::{
@@ -16,42 +14,22 @@ use crate::{
 pub struct ConnectionManager;
 
 impl ManageConnection for ConnectionManager {
-    type Connection = tokio_rusqlite::Connection;
+    type Connection = rusqlite::Connection;
     type Error = AppError;
 
     fn connect(&self) -> Result<Self::Connection, Self::Error> {
-        async fn get_connection() -> Result<tokio_rusqlite::Connection, tokio_rusqlite::Error> {
-            let conn = tokio_rusqlite::Connection::open("database/database.sqlite").await?;
-            conn.call(|conn| {
-                conn.pragma_update(None, "journal_mode", "WAL")?;
-                conn.pragma_update(None, "synchronous", "NORMAL")?;
-                conn.pragma_update(None, "foreign_keys", "ON")?;
-                Ok(())
-            })
-            .await?;
-            Ok(conn)
-        }
-
-        let Ok(conn) = Runtime::new()
-            .expect("failed to create tokio runtime")
-            .block_on(get_connection())
-        else {
-            return Err(AppError::Custom(
-                "failed to connect to database".to_string(),
-            ));
-        };
+        let conn = rusqlite::Connection::open("database/database.sqlite")?;
 
         // NOTE: Read the Docs before changing something about these pragmas
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
+        conn.pragma_update(None, "foreign_keys", "ON")?;
+
         Ok(conn)
     }
 
     fn is_valid(&self, conn: &mut Self::Connection) -> Result<(), Self::Error> {
-        Ok(tokio::task::block_in_place(|| {
-            Handle::current().block_on(async {
-                conn.call(|conn| Ok(conn.query_row("SELECT 1", [], |_r| Ok(()))))
-                    .await
-            })
-        })??)
+        conn.query_row("SELECT 1", [], |_r| Ok(())).convert_err()
     }
 
     fn has_broken(&self, _conn: &mut Self::Connection) -> bool {
@@ -88,35 +66,30 @@ impl fmt::Debug for Database {
     }
 }
 
-async fn db_init(conn: &Connection) -> AppResult<()> {
-    conn.call(|conn| {
-        {
-            {
-                let mut stmt = conn.prepare("SELECT name FROM sqlite_master")?;
-                let mut rows = stmt.query([])?;
-                let initialized = rows.next()?.is_some();
-                if initialized {
-                    return Ok(());
-                }
-            };
-            info!("Setting up database for the first time");
-
-            /*
-            TODO
-            - Make the storage_locations entry not hardcoded
-            - Consider adding a hash and last_modified column to data_files for tracking what needs to be recomputed/reevaluated
-                -> Same hash somewhere new -> reassign playback thumbnails for example
-                -> Different hash but location the same -> just recompute stuff related to the file without changing/removing references to it
-                -> last modified changed -> could be the trigger for recomputing the hash depending on how expensive that is, does this have any other meaning?
-            */
-
-            const INIT_REQUEST: &str = include_str!("../../database/sql/init.sql");
-            conn.execute_batch(INIT_REQUEST)?;
+async fn db_init(conn: &rusqlite::Connection) -> AppResult<()> {
+    {
+        let mut stmt = conn.prepare("SELECT name FROM sqlite_master")?;
+        let mut rows = stmt.query([])?;
+        let initialized = rows.next()?.is_some();
+        if initialized {
+            return Ok(());
         }
-        Ok(())
-    })
-    .await
-    .convert_err()
+    };
+    info!("Setting up database for the first time");
+
+    /*
+    TODO
+    - Make the storage_locations entry not hardcoded
+    - Consider adding a hash and last_modified column to data_files for tracking what needs to be recomputed/reevaluated
+        -> Same hash somewhere new -> reassign playback thumbnails for example
+        -> Different hash but location the same -> just recompute stuff related to the file without changing/removing references to it
+        -> last modified changed -> could be the trigger for recomputing the hash depending on how expensive that is, does this have any other meaning?
+    */
+
+    const INIT_REQUEST: &str = include_str!("../../database/sql/init.sql");
+    conn.execute_batch(INIT_REQUEST)?;
+
+    Ok(())
 }
 
 type Mapfn<T> = for<'a, 'b> fn(&'a rusqlite::Row<'b>) -> Result<T, rusqlite::Error>;

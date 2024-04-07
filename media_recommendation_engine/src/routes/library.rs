@@ -35,24 +35,20 @@ async fn get_library(
 
     let sessions = render_sessions(sessions).await;
     let franchises = conn
-        .call(|conn| {
-            Ok(conn
-                .prepare("SELECT id, title FROM franchise")?
-                .query_map_into([])?
-                .collect::<Result<Vec<(u64, String)>, _>>()?
-                .iter()
-                .map(|(id, title)| GridElement {
-                    title: title.clone(),
-                    redirect_entire: frontend_redirect(
-                        &format!("/preview/Franchise/{id}"),
-                        HXTarget::Content,
-                    ),
-                    redirect_img: String::new(),
-                    redirect_title: String::new(),
-                })
-                .collect::<Vec<_>>())
+        .prepare("SELECT id, title FROM franchise")?
+        .query_map_into([])?
+        .collect::<Result<Vec<(u64, String)>, _>>()?
+        .iter()
+        .map(|(id, title)| GridElement {
+            title: title.clone(),
+            redirect_entire: frontend_redirect(
+                &format!("/preview/Franchise/{id}"),
+                HXTarget::Content,
+            ),
+            redirect_img: String::new(),
+            redirect_title: String::new(),
         })
-        .await?;
+        .collect::<Vec<_>>();
 
     Ok(Library {
         sessions,
@@ -96,12 +92,12 @@ async fn preview(
     Path((prev, id)): Path<(Preview, u64)>,
 ) -> AppResult<impl IntoResponse> {
     Ok(PreviewTemplate {
-        top: top_preview(db.clone(), id, prev).await?,
-        categories: preview_categories(&db, id, prev).await?,
+        top: top_preview(db.clone(), id, prev)?,
+        categories: preview_categories(&db, id, prev)?,
     })
 }
 
-async fn top_preview(conn: Database, id: u64, prev: Preview) -> AppResult<LargeImage> {
+fn top_preview(conn: Database, id: u64, prev: Preview) -> AppResult<LargeImage> {
     fn season_title(
         conn: &rusqlite::Connection,
         season_id: u64,
@@ -121,33 +117,29 @@ async fn top_preview(conn: Database, id: u64, prev: Preview) -> AppResult<LargeI
 
     let conn = conn.get()?;
 
-    let (title, image_interaction) = conn
-        .call(
-            move |conn: &mut rusqlite::Connection| -> Result<(String, String), tokio_rusqlite::Error> {
-                match prev {
-                    Preview::Franchise => Ok((
-                        conn.query_row_get("SELECT title FROM franchise WHERE id=?1", [id])?,
-                        String::new(),
-                    )),
-                    Preview::Movie => {
-                        let (video_id, reference_flag, title): (u64, u64, String) = conn
-                            .query_row_into(
-                                "SELECT videoid, referenceflag, title FROM movies WHERE id=?1",
-                                [id],
-                            )?;
-                        let video_id = resolve_video(conn, video_id, reference_flag)?;
-                        Ok((
-                            title,
-                            frontend_redirect_explicit(&format!("/video/{video_id}"), HXTarget::All, None),
-                        ))
-                    }
-                    Preview::Series => Ok((
-                        conn.query_row_get("SELECT title FROM series WHERE id=?1", [id])?,
-                        String::new(),
-                    )),
-                    Preview::Season => Ok((season_title(conn, id)?, String::new())),
-                    Preview::Episode => {
-                        let (title, episode, video_id, reference_flag, season_id): (
+    let (title, image_interaction) = match prev {
+        Preview::Franchise => (
+            conn.query_row_get("SELECT title FROM franchise WHERE id=?1", [id])?,
+            String::new(),
+        ),
+        Preview::Movie => {
+            let (video_id, reference_flag, title): (u64, u64, String) = conn.query_row_into(
+                "SELECT videoid, referenceflag, title FROM movies WHERE id=?1",
+                [id],
+            )?;
+            let video_id = resolve_video(&conn, video_id, reference_flag)?;
+            (
+                title,
+                frontend_redirect_explicit(&format!("/video/{video_id}"), HXTarget::All, None),
+            )
+        }
+        Preview::Series => (
+            conn.query_row_get("SELECT title FROM series WHERE id=?1", [id])?,
+            String::new(),
+        ),
+        Preview::Season => (season_title(&conn, id)?, String::new()),
+        Preview::Episode => {
+            let (title, episode, video_id, reference_flag, season_id): (
                 Option<String>,
                 u64,
                 u64,
@@ -158,20 +150,17 @@ async fn top_preview(conn: Database, id: u64, prev: Preview) -> AppResult<LargeI
                 [id],
             )?;
 
-                        let season_title = season_title(conn, season_id)?;
-                        let title = title.unwrap_or(format!("{season_title} - Episode {episode}"));
+            let season_title = season_title(&conn, season_id)?;
+            let title = title.unwrap_or(format!("{season_title} - Episode {episode}"));
 
-                        let video_id = resolve_video(conn, video_id, reference_flag)?;
+            let video_id = resolve_video(&conn, video_id, reference_flag)?;
 
-                        Ok((
-                            title,
-                            frontend_redirect_explicit(&format!("/video/{video_id}"), HXTarget::All, None),
-                        ))
-                    }
-                }
-            },
-        )
-        .await?;
+            (
+                title,
+                frontend_redirect_explicit(&format!("/video/{video_id}"), HXTarget::All, None),
+            )
+        }
+    };
 
     Ok(LargeImage {
         title,
@@ -179,7 +168,7 @@ async fn top_preview(conn: Database, id: u64, prev: Preview) -> AppResult<LargeI
     })
 }
 
-async fn preview_categories(
+fn preview_categories(
     db: &Database,
     id: u64,
     prev: Preview,
@@ -316,7 +305,7 @@ async fn preview_categories(
     }
 
     let conn = db.get()?;
-    conn.call(move |conn| Ok(inner(conn, id, prev))).await?
+    inner(&conn, id, prev)
 }
 
 fn resolve_video(
