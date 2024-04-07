@@ -27,7 +27,7 @@ impl RecommendationPopup {
 
         Ok(RecommendationPopup {
             id: output.id,
-            image: "".to_string(),
+            image: String::new(),
             title: output.title,
         })
     }

@@ -13,14 +13,14 @@ pub enum HXTarget {
 }
 
 impl HXTarget {
-    pub const fn as_str(&self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             HXTarget::All => "all",
             HXTarget::Content => "content",
         }
     }
 
-    pub const fn as_target(&self) -> &'static str {
+    pub const fn as_target(self) -> &'static str {
         match self {
             HXTarget::All => "#all",
             HXTarget::Content => "#content",

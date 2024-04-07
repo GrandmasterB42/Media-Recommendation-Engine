@@ -52,9 +52,7 @@ async fn main() {
         warn!("provided invalid arguments: \"{args:?}\"");
     }
 
-    let db = Database::new()
-        .await
-        .expect("failed to connect to database");
+    let db = Database::new().expect("failed to connect to database");
 
     let session_store = db.clone();
 

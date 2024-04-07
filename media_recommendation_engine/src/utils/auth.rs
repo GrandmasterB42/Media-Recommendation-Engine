@@ -214,7 +214,7 @@ impl AuthzBackend for Database {
 
 fn save_with_conn(
     conn: &rusqlite::Connection,
-    record_id: String,
+    record_id: &str,
     record_data: &[u8],
     record_expiry_date: i64,
 ) -> rusqlite::Result<usize> {
@@ -251,7 +251,7 @@ impl SessionStore for Database {
             let record_data = rmp_serde::to_vec(&record).convert_err::<SessionStoreError>()?;
             save_with_conn(
                 &conn,
-                record.id.to_string(),
+                &record.id.to_string(),
                 &record_data,
                 record.expiry_date.unix_timestamp(),
             )
@@ -270,7 +270,7 @@ impl SessionStore for Database {
         let record_data = rmp_serde::to_vec(&record).convert_err::<SessionStoreError>()?;
         save_with_conn(
             &conn,
-            record.id.to_string(),
+            &record.id.to_string(),
             &record_data,
             record.expiry_date.unix_timestamp(),
         )

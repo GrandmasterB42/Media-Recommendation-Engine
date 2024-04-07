@@ -41,11 +41,11 @@ impl ManageConnection for ConnectionManager {
 pub struct Database(Pool<ConnectionManager>);
 
 impl Database {
-    pub async fn new() -> AppResult<Self> {
+    pub fn new() -> AppResult<Self> {
         // Note: Use Pool::builder() for more configuration options.
         let pool = Pool::new(ConnectionManager)?;
         let connection = pool.get()?;
-        db_init(&connection).await.expect(
+        db_init(&connection).expect(
             "Database initialization failed, when this happens something has gone horribly wrong",
         );
         Ok(Self(pool))
@@ -66,7 +66,7 @@ impl fmt::Debug for Database {
     }
 }
 
-async fn db_init(conn: &rusqlite::Connection) -> AppResult<()> {
+fn db_init(conn: &rusqlite::Connection) -> AppResult<()> {
     {
         let mut stmt = conn.prepare("SELECT name FROM sqlite_master")?;
         let mut rows = stmt.query([])?;
