@@ -4,90 +4,129 @@ use crate::{
     database::{Database, QueryRowGetConnExt},
     state::{AppResult, Cancellation},
 };
+
 use serde::{Deserialize, Serialize};
 use tokio::{
     io::AsyncWriteExt,
-    sync::{
-        watch::{self, Receiver, Sender},
-        RwLock,
-    },
+    sync::watch::{self, Receiver, Sender},
 };
 use tracing::{debug, error, info, warn};
 
 use super::HandleErr;
 
-pub type ServerConfig = Arc<RwLock<ConfigFile>>;
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigFile {
+    port: u16,
+    index_wait: f64,
+    admin: AdminCredentials,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AdminCredentials {
+    username: String,
+    password: String,
+}
+
+impl Default for ConfigFile {
+    fn default() -> Self {
+        Self {
+            port: 3000,
+            index_wait: 300.,
+            admin: AdminCredentials::default(),
+        }
+    }
+}
+
+impl Default for AdminCredentials {
+    fn default() -> Self {
+        Self {
+            // The username is static for now, file changes don't affect it
+            username: "admin".to_owned(),
+            password: "admin".to_owned(),
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct ServerSettings {
-    pub inner: ServerConfig,
-    // For now this just indicates whether something has changed, not what (used in the future for web interface setting changes)
-    changed: Arc<Sender<()>>,
-    abort_wait: Arc<Sender<f64>>,
+    port: (Arc<Sender<u16>>, Receiver<u16>),
+    index_wait: (Arc<Sender<f64>>, Receiver<f64>),
+    admin: (Arc<Sender<AdminCredentials>>, Receiver<AdminCredentials>),
 }
 
 impl ServerSettings {
     const PATH: &'static str = "mreconfig.toml";
 
     pub async fn new(cancel: Cancellation, db: Database) -> Self {
-        let config_file = if let Some(config_file) = tokio::fs::read_to_string(Self::PATH)
+        let config = if let Some(config_file) = tokio::fs::read_to_string(Self::PATH)
             .await
             .log_warn_with_msg("Failed to create config file, trying to create a new one")
         {
-            config_file
+            toml::from_str(&config_file)
+                .log_err_with_msg("Failed to parse config file, using the default config instead")
+                .unwrap_or_default()
         } else {
             let default = ConfigFile::default();
-            Self::create_config_file(&default).await;
-            toml::to_string_pretty(&default)
-                .expect("failed to serialize default config after it should have been created, this should never happen")
+            Self::write_config_file(&default).await;
+            default
         };
 
-        let config: ConfigFile = toml::from_str(&config_file)
-            .log_err_with_msg("Failed to parse config file, using the default config instead")
-            .unwrap_or_default();
-
-        let change = watch::channel(());
-
-        let send = change.0;
-        let recv = change.1;
-
-        let (waiting, r) = watch::channel(0.);
-        Box::leak(Box::new(r)); // Leaking the receiver so the channel is only closed when the program ends
+        let (port, port_recv) = watch::channel(config.port);
+        let (index_wait, index_wait_recv) = watch::channel(config.index_wait);
+        let (admin, admin_recv) = watch::channel(config.admin.clone());
 
         let data = Self {
-            inner: Arc::new(RwLock::new(config)),
-            changed: Arc::new(send),
-            abort_wait: Arc::new(waiting),
+            port: (Arc::new(port), port_recv),
+            index_wait: (Arc::new(index_wait), index_wait_recv),
+            admin: (Arc::new(admin), admin_recv),
         };
 
-        let mut last_admin = data.admin().await;
-        data.update_db_to_file_content(&db, &mut last_admin)
-            .await
-            .log_warn_with_msg("failed to change database in accordance with config file");
+        {
+            let mut last_admin = data.admin();
+            data.update_db_to_file_content(&db, &mut last_admin)
+                .await
+                .log_warn_with_msg("failed to change database in accordance with config file");
 
-        let cloned_settings = data.clone();
-        tokio::spawn(async move {
-            Self::watch_file(&cloned_settings, cancel, db, recv).await;
-        });
+            let mut copy = data.clone();
+            tokio::spawn(async move {
+                copy.watch_file(cancel, db).await;
+            });
+        }
 
         data
     }
 
-    async fn watch_file(&self, cancel: Cancellation, db: Database, mut change: Receiver<()>) {
+    fn create_config(&self) -> ConfigFile {
+        let port = self.port();
+        let index_wait = self.index_wait();
+        let admin = self.admin();
+        ConfigFile {
+            port,
+            index_wait,
+            admin,
+        }
+    }
+
+    async fn watch_file(&mut self, cancel: Cancellation, db: Database) {
         let mut last_changed = tokio::fs::metadata(Self::PATH)
             .await
             .unwrap()
             .modified()
             .unwrap_or(SystemTime::now());
 
-        let mut last_admin = self.admin().await;
-        let mut last_wait = self.index_wait().await;
+        let mut last_admin = self.admin();
 
         let mut update_file = false;
+        let mut file_is_update_origin = false;
         loop {
             if !Path::new(Self::PATH).exists() {
                 warn!("Config file does not exist, trying to create one.");
-                Self::create_config_file(&self.config_cloned().await).await;
+                self.write_config_from_self().await;
+            }
+
+            if file_is_update_origin {
+                file_is_update_origin = false;
+                update_file = false;
             }
 
             if update_file {
@@ -95,12 +134,11 @@ impl ServerSettings {
                     .await
                     .log_err_with_msg("Failed to open config file, trying to create a new one")
                 else {
-                    let config = self.config_cloned().await;
-                    Self::create_config_file(&config).await;
+                    self.write_config_from_self().await;
                     continue;
                 };
 
-                let server_side = self.config_cloned().await;
+                let server_side = self.create_config();
                 let toml_repr = toml::to_string_pretty(&server_side)
                     .expect("failed to serialize config, this should never happen");
 
@@ -111,61 +149,51 @@ impl ServerSettings {
                     .await
                     .log_warn_with_msg("Failed to flush config file");
             } else {
-                let config_file = match tokio::fs::read_to_string(Self::PATH).await {
-                    Ok(config_file) => config_file,
+                let config = match tokio::fs::read_to_string(Self::PATH).await {
+                    Ok(config_file) => toml::from_str(&config_file)
+                        .log_err_with_msg(
+                            "Failed to parse config file, using the default config instead",
+                        )
+                        .unwrap_or_default(),
                     Err(e) => {
                         error!("Failed to read config file: {e}");
-                        let default = ConfigFile::default();
-                        Self::create_config_file(&default).await;
-                        toml::to_string_pretty(&default)
-                            .expect("failed to serialize default config after it should have been created, this should never happen")
+                        self.write_config_from_self().await;
+                        continue;
                     }
                 };
 
-                let config: ConfigFile = toml::from_str(&config_file)
-                    .log_err_with_msg(
-                        "Failed to parse config file, using the default config instead",
-                    )
-                    .unwrap_or_default();
-
-                self.config_modifiable().write().await.clone_from(&config);
+                self.set_all(config);
+                file_is_update_origin = true;
             }
 
             self.update_db_to_file_content(&db, &mut last_admin)
                 .await
                 .log_warn_with_msg("failed to change database in accordance with config file");
 
-            let current_wait = self.index_wait().await;
-            if (last_wait - current_wait).abs() > f64::EPSILON && current_wait > 0. {
-                last_wait = current_wait;
-                self.abort_wait
-                    .send(current_wait)
-                    .expect("This channel should live for the entire porgram");
-            } else if current_wait <= 0. {
-                // TODO: Make 0 indicate directory watching is enabled instead of wait time
-                warn!("Indexing wait time is 0 or less, this is not allowed");
-            }
-
-            let (should_stop, u_f, l_c) = tokio::select! {
-                _ = change.changed() => {
-                    (false, true, last_changed)
+            let (u_f, l_c) = tokio::select! {
+                _ = self.any_changed() => {
+                    (true, last_changed)
                 },
                 last = Self::resolve_once_modified(last_changed) => {
                     debug!("Registered config file change");
-                    (false, false, last)
+                    (false, last)
                 },
-                _ = cancel.cancelled() => (true, false, last_changed),
+                _ = cancel.cancelled() => return,
             };
             last_changed = l_c;
             update_file = u_f;
-
-            if should_stop {
-                break;
-            }
         }
     }
 
-    async fn create_config_file(config: &ConfigFile) {
+    async fn any_changed(&mut self) {
+        tokio::select! {
+            _ = self.port.1.changed() => {},
+            _ = self.index_wait.1.changed() => {},
+            _ = self.admin.1.changed() => {},
+        }
+    }
+
+    async fn write_config_file(config: &ConfigFile) {
         let config = toml::to_string_pretty(config)
             .expect("failed to serialize config, this should never happen");
 
@@ -176,6 +204,11 @@ impl ServerSettings {
         {
             tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
         }
+    }
+
+    async fn write_config_from_self(&self) {
+        let config = self.create_config();
+        Self::write_config_file(&config).await;
     }
 
     async fn resolve_once_modified(last_changed: SystemTime) -> SystemTime {
@@ -199,12 +232,12 @@ impl ServerSettings {
     }
 
     pub async fn wait_configured_time(&self) {
-        let mut recv = self.abort_wait.subscribe();
+        let mut recv = self.index_wait.0.subscribe();
         tokio::select! {
             _ = recv.changed() => {
                 info!("changed indexing waiting time to {} seconds and started indexing again", *recv.borrow());
             },
-            _ = tokio::time::sleep(tokio::time::Duration::from_secs_f64(self.index_wait().await)) => {},
+            _ = tokio::time::sleep(tokio::time::Duration::from_secs_f64(self.index_wait())) => {},
         }
     }
 
@@ -220,7 +253,7 @@ impl ServerSettings {
             .map(|count: i64| count == 0)
             .unwrap_or(false);
 
-        let admin = self.admin().await;
+        let admin = self.admin();
         let (username, pw) = (admin.username.clone(), admin.password.clone());
         let password = tokio::task::spawn_blocking(|| password_auth::generate_hash(pw))
             .await
@@ -250,57 +283,53 @@ impl ServerSettings {
         Ok(())
     }
 
-    /// When this is used, there has to be a send into the change channel to make the system repsond
-    fn config_modifiable(&self) -> ServerConfig {
-        self.inner.clone()
+    pub fn port(&self) -> u16 {
+        *self.port.1.borrow()
     }
 
-    pub async fn config_cloned(&self) -> ConfigFile {
-        self.inner.read().await.clone()
+    pub fn set_port(&self, port: u16) {
+        self.port.0.send_if_modified(|current| {
+            let is_different = *current != port;
+            if is_different {
+                warn!("The port to spawn the server on was modified, this will only take effect after a restart of the server.");
+                *current = port;
+            }
+            is_different
+        });
     }
 
-    pub async fn port(&self) -> u16 {
-        self.config_modifiable().read().await.port
+    pub fn index_wait(&self) -> f64 {
+        *self.index_wait.1.borrow()
     }
 
-    pub async fn index_wait(&self) -> f64 {
-        self.config_modifiable().read().await.index_wait
+    pub fn set_index_wait(&self, wait: f64) {
+        self.index_wait.0.send_if_modified(|current| {
+            let is_different = (*current - wait).abs() > f64::EPSILON;
+            if is_different {
+                *current = wait;
+            }
+            is_different
+        });
     }
 
-    pub async fn admin(&self) -> AdminCredentials {
-        self.config_modifiable().read().await.admin.clone()
+    pub fn admin(&self) -> AdminCredentials {
+        self.admin.1.borrow().clone()
     }
-}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConfigFile {
-    port: u16,
-    index_wait: f64,
-    admin: AdminCredentials,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AdminCredentials {
-    username: String,
-    password: String,
-}
-
-impl Default for ConfigFile {
-    fn default() -> Self {
-        Self {
-            port: 3000,
-            index_wait: 300.,
-            admin: AdminCredentials::default(),
-        }
+    pub fn set_admin(&self, admin: AdminCredentials) {
+        self.admin.0.send_if_modified(|current| {
+            let is_different = *current != admin;
+            if is_different {
+                *current = admin;
+            }
+            is_different
+        });
     }
-}
 
-impl Default for AdminCredentials {
-    fn default() -> Self {
-        Self {
-            // The username is static for now, file changes don't affect it
-            username: "admin".to_owned(),
-            password: "admin".to_owned(),
-        }
+    pub fn set_all(&self, config: ConfigFile) {
+        let (port, wait, admin) = (config.port, config.index_wait, config.admin);
+        self.set_port(port);
+        self.set_index_wait(wait);
+        self.set_admin(admin);
     }
 }

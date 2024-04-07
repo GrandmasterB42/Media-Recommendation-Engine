@@ -87,7 +87,7 @@ async fn main() {
         .with_state(state)
         .layer(auth);
 
-    let port = settings.port().await;
+    let port = settings.port();
     let ip = format!("0.0.0.0:{port}");
 
     let listener = TcpListener::bind(&ip)
