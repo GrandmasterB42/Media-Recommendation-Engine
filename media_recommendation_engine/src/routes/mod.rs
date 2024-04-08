@@ -3,6 +3,7 @@ mod explore;
 mod homepage;
 mod library;
 mod login;
+mod settings;
 mod streaming;
 
 pub use error::error;
@@ -10,6 +11,7 @@ pub use explore::explore;
 pub use homepage::homepage;
 pub use library::library;
 pub use login::login;
+pub use settings::settings;
 pub use streaming::{streaming, StreamingSessions};
 
 use crate::state::AppState;

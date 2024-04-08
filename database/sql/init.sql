@@ -20,6 +20,8 @@ CREATE TABLE permissions (
     name TEXT NOT NULL
 );
 
+INSERT INTO permissions (name) VALUES ("owner");
+
 CREATE TABLE groups (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL

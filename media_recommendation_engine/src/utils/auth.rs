@@ -21,12 +21,28 @@ use time::OffsetDateTime;
 
 use crate::{
     database::{Database, QueryRowGetConnExt, QueryRowIntoConnExt, QueryRowIntoStmtExt},
-    state::AppError,
+    state::{AppError, AppResult},
 };
 
 use super::ConvertErr;
 
 pub type AuthSession = axum_login::AuthSession<Database>;
+
+pub trait AuthExt {
+    async fn has_perm(&self, perm: impl Into<Permission>) -> AppResult<bool>;
+}
+
+impl AuthExt for AuthSession {
+    async fn has_perm(&self, perm: impl Into<Permission>) -> AppResult<bool> {
+        if let Some(user) = &self.user {
+            self.backend.has_perm(user, perm.into()).await
+        } else {
+            Err(AppError::Custom(
+                "Tried to check permission of a user that isn't logged in".to_string(),
+            ))
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct User {
@@ -167,6 +183,20 @@ impl AuthnBackend for Database {
 #[derive(PartialEq, Eq, Hash)]
 pub struct Permission {
     name: String,
+}
+
+impl From<&str> for Permission {
+    fn from(value: &str) -> Self {
+        Self {
+            name: value.to_string(),
+        }
+    }
+}
+
+impl From<String> for Permission {
+    fn from(value: String) -> Self {
+        Self { name: value }
+    }
 }
 
 impl TryFrom<&rusqlite::Row<'_>> for Permission {

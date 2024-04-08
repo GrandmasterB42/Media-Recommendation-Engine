@@ -34,6 +34,27 @@ pub struct Error<'a> {
 }
 
 #[derive(Template)]
+#[template(path = "../frontend/content/settings.html")]
+pub struct Settings<'a> {
+    pub admin_settings: Option<Vec<Setting<'a>>>,
+    pub account_settings: Vec<Setting<'a>>,
+}
+
+#[derive(Template)]
+#[template(path = "../frontend/content/setting.html")]
+pub enum Setting<'a> {
+    TextSetting {
+        prompt: &'a str,
+        action: &'a str,
+    },
+    Button {
+        label: &'a str,
+        class: &'a str,
+        action: &'a str,
+    },
+}
+
+#[derive(Template)]
 #[template(path = "../frontend/content/library.html")]
 pub struct Library {
     pub sessions: Vec<GridElement>,

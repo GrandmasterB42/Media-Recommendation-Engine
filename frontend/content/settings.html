@@ -1,0 +1,30 @@
+<div class="settings">
+    <link href="/styles/settings.css" rel="stylesheet" />
+
+    <div class="settings-selector">
+        <h1> Settings </h1>
+    </div>
+
+    {% if let Some(admin_settings) = admin_settings %}
+
+    {% for setting in admin_settings %}
+    {{ setting|safe }}
+    {% endfor %}
+
+    <div class="danger">
+        <h3> Danger Zone </h3>
+
+        <button hx-post="/settings/shutdown" hx-confirm="Are you sure you want to shut down the Server?">
+            Shutdown
+        </button>
+
+    </div>
+
+    {% endif %}
+
+    <div class="settings">
+        {% for setting in account_settings %}
+        {{ setting|safe }}
+        {% endfor %}
+    </div>
+</div>

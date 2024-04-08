@@ -76,7 +76,7 @@ async fn main() {
         .route("/", get(routes::homepage))
         .merge(routes::library())
         .route("/explore", get(routes::explore))
-        .route("/settings", get(|| async move { "" }))
+        .nest("/settings", routes::settings())
         .nest("/video", routes::streaming())
         .layer(middleware::from_fn(login_required))
         .merge(htmx())
@@ -124,13 +124,16 @@ async fn shutdown(indexing: JoinHandle<!>, cancel: Cancellation) {
     #[cfg(not(unix))]
     let terminate = std::future::pending::<()>();
 
-    tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
-    }
+    let dontcancel = tokio::select! {
+        _ = cancel.cancelled() => true,
+        _ = ctrl_c => false,
+        _ = terminate => false,
+    };
 
     info!("Starting to shut down...");
 
     indexing.abort();
-    cancel.cancel();
+    if !dontcancel {
+        cancel.cancel();
+    }
 }

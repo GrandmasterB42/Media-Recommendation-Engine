@@ -1,7 +1,7 @@
 use std::{path::Path, sync::Arc, time::SystemTime};
 
 use crate::{
-    database::{Database, QueryRowGetConnExt},
+    database::{Database, QueryRowGetConnExt, QueryRowGetStmtExt},
     state::{AppResult, Cancellation},
 };
 
@@ -40,7 +40,6 @@ impl Default for ConfigFile {
 impl Default for AdminCredentials {
     fn default() -> Self {
         Self {
-            // The username is static for now, file changes don't affect it
             username: "admin".to_owned(),
             password: "admin".to_owned(),
         }
@@ -269,15 +268,29 @@ impl ServerSettings {
         }
         *last_admin = admin;
 
-        // TODO: Once more permission are there, make this remove any user with these permissions, not last_admin and insert this new one. The file is the source of truth
-        if !users_is_empty {
-            conn.execute("DELETE FROM users WHERE username = ?1", [last_username])
-                .log_err_with_msg("Failed to remove last admin, there might be multiple users now");
+        let owner_permission_id =
+            conn.query_row_get::<u32>("SELECT id FROM permissions WHERE name = 'owner'", [])?;
+
+        let mut stmt =
+            conn.prepare("SELECT userid FROM user_permissions WHERE permissionid = ?1")?;
+        let user_ids_with_perm = stmt
+            .query_map_get::<u32>([owner_permission_id])?
+            .map(|v| v.unwrap())
+            .collect::<Vec<_>>();
+
+        for user_id in user_ids_with_perm {
+            conn.execute("DELETE FROM user_permissions WHERE userid = ?1", [user_id])?;
+            conn.execute("DELETE FROM users WHERE id = ?1", [user_id])?;
         }
 
-        conn.execute(
-            "INSERT INTO users (username, password) VALUES (?1, ?2)",
+        let user_id = conn.query_row_get::<u32>(
+            "INSERT INTO users (username, password) VALUES (?1, ?2) RETURNING id",
             [username, password],
+        )?;
+
+        conn.execute(
+            "INSERT INTO user_permissions (userid, permissionid) VALUES (?1, ?2)",
+            [user_id, owner_permission_id],
         )?;
 
         Ok(())

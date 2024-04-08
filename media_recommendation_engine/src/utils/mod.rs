@@ -13,7 +13,7 @@ mod frontend;
 pub use frontend::{frontend_redirect, frontend_redirect_explicit, htmx, HXTarget};
 
 mod auth;
-pub use auth::{login_required, AuthSession, Credentials};
+pub use auth::{login_required, AuthExt, AuthSession, Credentials};
 
 pub mod templates;
 
