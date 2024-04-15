@@ -98,11 +98,6 @@ pub trait QueryRowIntoStmtExt<P>
 where
     P: rusqlite::Params,
 {
-    fn query_row_into<T: for<'a> TryFrom<&'a rusqlite::Row<'a>, Error = rusqlite::Error>>(
-        &mut self,
-        params: P,
-    ) -> Result<T, rusqlite::Error>;
-
     fn query_map_into<T: for<'a> TryFrom<&'a rusqlite::Row<'a>, Error = rusqlite::Error>>(
         &mut self,
         params: P,
@@ -113,14 +108,6 @@ impl<P> QueryRowIntoStmtExt<P> for rusqlite::Statement<'_>
 where
     P: rusqlite::Params,
 {
-    /// Executes the prepared statement and tries to convert the first row into the provided type
-    fn query_row_into<T: for<'a> TryFrom<&'a rusqlite::Row<'a>, Error = rusqlite::Error>>(
-        &mut self,
-        params: P,
-    ) -> Result<T, rusqlite::Error> {
-        self.query_row(params, |row| row.try_into())
-    }
-
     // Executes the prepared statement and tries to convert each row into the provided type
     fn query_map_into<T: for<'a> TryFrom<&'a rusqlite::Row<'a>, Error = rusqlite::Error>>(
         &mut self,
