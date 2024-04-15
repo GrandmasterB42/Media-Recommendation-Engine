@@ -1,30 +1,79 @@
-<div class="settings">
+<div class="settings-container">
     <link href="/styles/settings.css" rel="stylesheet" />
 
-    <div class="settings-selector">
+    <script src="/scripts/settings.js"> </script>
+
+    <div class="upper-wrapper">
         <h1> Settings </h1>
+        <button id="back-button" type="button" {{ redirect_back|safe }}> Back </button>
     </div>
 
-    {% if let Some(admin_settings) = admin_settings %}
+    <div class="below-wrapper">
 
-    {% for setting in admin_settings %}
-    {{ setting|safe }}
-    {% endfor %}
+        <div class="settings-selector">
 
-    <div class="danger">
-        <h3> Danger Zone </h3>
+            <input checked type="radio" id="profile" name="setting" class="select">
+            <label for="profile" class="input_label"> Profile </label>
 
-        <button hx-post="/settings/shutdown" hx-confirm="Are you sure you want to shut down the Server?">
-            Shutdown
-        </button>
+            {% if let Some(_) = admin_settings %}
+            <input type="radio" id="admin_settings" name="setting" class="select">
+            <label for="admin_settings"> Admin Settings </label>
+            {% endif %}
+
+            <input type="radio" id="account_settings" name="setting" class="select">
+            <label for="account_settings"> Account Settings </label>
+
+        </div>
+
+
+        <div class="settings">
+
+            <div class="section profile">
+                <h2> Profile </h2>
+                Fancy profile view | change username/password
+            </div>
+
+            {% if let Some(admin_settings) = admin_settings %}
+            <div class="section admin_settings">
+                <h2> Admin Settings </h2>
+
+                User addition will go here
+
+                {% for setting in admin_settings %}
+                {{ setting|safe }}
+                {% endfor %}
+
+                <div class="danger">
+                    <h3> Danger Zone </h3>
+
+                    <div class="centered">
+                        <button type="button" hx-post="/settings/shutdown"
+                            hx-confirm="Are you sure you want to shut down the Server?" hx-swap="none" class="shutdown">
+                            Shutdown
+                        </button>
+
+                        <button type="button" hx-post="/settings/restart"
+                            hx-confirm="Are you sure you want to restart the Server?" hx-swap="none" class="shutdown">
+                            Restart
+                        </button>
+                    </div>
+
+                </div>
+
+            </div>
+            {% endif %}
+
+            <div class="section account_settings">
+                <h2> Account Settings </h2>
+
+                {% for setting in account_settings %}
+                {{ setting|safe }}
+                {% endfor %}
+
+            </div>
+
+        </div>
 
     </div>
 
-    {% endif %}
-
-    <div class="settings">
-        {% for setting in account_settings %}
-        {{ setting|safe }}
-        {% endfor %}
-    </div>
 </div>

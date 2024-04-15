@@ -11,8 +11,9 @@ use axum::{
 use crate::{
     state::{AppResult, AppState, Cancellation},
     utils::{
+        frontend_redirect,
         templates::{Setting, Settings},
-        AuthExt, AuthSession,
+        AuthExt, AuthSession, HXTarget,
     },
 };
 
@@ -20,6 +21,7 @@ pub fn settings() -> Router<AppState> {
     Router::new()
         .route("/", get(settings_page))
         .route("/shutdown", post(shutdown))
+        .route("/restart", post(restart))
 }
 
 async fn shutdown(
@@ -36,6 +38,8 @@ async fn shutdown(
         Ok(StatusCode::UNAUTHORIZED)
     }
 }
+
+async fn restart() {}
 
 async fn settings_page(auth: AuthSession) -> AppResult<impl IntoResponse> {
     let text_setting = Setting::TextSetting {
@@ -56,5 +60,6 @@ async fn settings_page(auth: AuthSession) -> AppResult<impl IntoResponse> {
     Ok(Settings {
         admin_settings,
         account_settings: vec![text_setting, button_setting],
+        redirect_back: frontend_redirect("/", HXTarget::All),
     })
 }

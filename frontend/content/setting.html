@@ -2,10 +2,10 @@
 
 {% when Setting::TextSetting with { prompt, action } %}
 
-<h5> {{ prompt }} {{ action }} </h5>
+<p> {{ prompt }} {{ action }} </p>
 
 {% when Setting::Button with { label, class, action } %}
 
-<h5> {{ label }} {{ class }} {{ action }} </h5>
+<p> {{ label }} {{ class }} {{ action }} </p>
 
 {% endmatch %}

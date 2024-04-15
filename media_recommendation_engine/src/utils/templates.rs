@@ -38,6 +38,7 @@ pub struct Error<'a> {
 pub struct Settings<'a> {
     pub admin_settings: Option<Vec<Setting<'a>>>,
     pub account_settings: Vec<Setting<'a>>,
+    pub redirect_back: String,
 }
 
 #[derive(Template)]
