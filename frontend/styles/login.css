@@ -32,3 +32,17 @@
     border: 1px solid #ccc;
     border-radius: 5px;
 }
+
+.login_input button {
+    border: none;
+    background-color: #323232;
+    color: #f2f2f2;
+    font-size: 20px;
+    border-radius: 5px;
+    padding: 5px;
+}
+
+.login_input button:hover {
+    background-color: #999;
+    cursor: pointer;
+}
