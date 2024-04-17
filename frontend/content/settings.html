@@ -29,9 +29,29 @@
         <div class="settings">
 
             <div class="section profile">
-                <h2> Profile </h2>
-                Fancy profile view | change username/password
+                <div class="profile-card">
+                    <h2> Profile </h2>
+                    <div class="profile-img"> </div>
+                    <p id="name"> {{ name }} </p>
+                </div>
+
+                <div class="change-user" autocomplete="off">
+                    <form class="change-form" hx-patch="/settings/username" hx-swap="none"
+                        hx-confirm="This action will change your username! You will be logged out! Are you sure?">
+                        <input type="text" placeholder="New Username" name="name" class="change-input"> </input>
+                        <button type="submit"> Apply </button>
+                    </form>
+                    <form class="change-form" hx-patch="/settings/password" hx-swap="none"
+                        hx-confirm="This action will change your password! You will be logged out! Are you sure?">
+                        <input type="password" placeholder="New Password" name="password" class="change-input">
+                        </input>
+                        <button type="submit"> Apply </button>
+                    </form>
+                    <div id="error"></div>
+                </div>
+
             </div>
+
 
             {% if let Some(admin_settings) = admin_settings %}
             <div class="section admin_settings">

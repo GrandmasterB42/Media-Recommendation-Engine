@@ -39,6 +39,7 @@ pub struct Settings<'a> {
     pub admin_settings: Option<Vec<Setting<'a>>>,
     pub account_settings: Vec<Setting<'a>>,
     pub redirect_back: String,
+    pub name: String,
 }
 
 #[derive(Template)]
@@ -101,4 +102,11 @@ pub struct RecommendationPopup {
     pub id: u64,
     pub image: String,
     pub title: String,
+}
+
+#[derive(Template, Clone)]
+#[template(path = "../frontend/content/swap_in.html")]
+pub struct SwapIn<'a> {
+    pub swap_id: &'a str,
+    pub content: &'a str,
 }

@@ -23,7 +23,7 @@ pub struct ConfigFile {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AdminCredentials {
-    username: String,
+    pub username: String,
     password: String,
 }
 
@@ -129,7 +129,10 @@ impl ServerSettings {
             }
 
             if update_file {
-                let Some(mut file) = tokio::fs::File::open(Self::PATH)
+                let Some(mut file) = tokio::fs::File::options()
+                    .read(true)
+                    .write(true)
+                    .open(Self::PATH)
                     .await
                     .log_err_with_msg("Failed to open config file, trying to create a new one")
                 else {
@@ -171,6 +174,7 @@ impl ServerSettings {
 
             let (u_f, l_c) = tokio::select! {
                 _ = self.any_changed() => {
+                    file_is_update_origin = false;
                     (true, last_changed)
                 },
                 last = Self::resolve_once_modified(last_changed) => {
@@ -337,6 +341,22 @@ impl ServerSettings {
             }
             is_different
         });
+    }
+
+    pub fn update_admin_username(&self, username: &str) {
+        let pw = self.admin().password;
+        self.set_admin(AdminCredentials {
+            username: username.to_owned(),
+            password: pw,
+        })
+    }
+
+    pub fn update_admin_password(&self, password: &str) {
+        let username = self.admin().username;
+        self.set_admin(AdminCredentials {
+            username,
+            password: password.to_owned(),
+        })
     }
 
     pub fn set_all(&self, config: ConfigFile) {
