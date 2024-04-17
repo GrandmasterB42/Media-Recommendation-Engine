@@ -1,7 +1,18 @@
+:root {
+    --background_color: #1a1a1a;
+    --text_white: #f2f2f2;
+    --content_color: #333;
+    --foreground_color: #272727;
+    --highlight_color: #818181;
+    --warning_color: #b51212;
+    --content_red: #800909;
+    --highlight_red: #f80e0e;
+}
+
 body {
     font-family: Arial, sans-serif;
-    background-color: #1a1a1a;
-    color: #f2f2f2;
+    background-color: var(--background_color);
+    color: var(--text_white);
 }
 
 label {
@@ -20,11 +31,11 @@ label {
 }
 
 #content {
-    background-color: #333;
+    background-color: var(--content_color);
     padding: 20px;
     border-radius: 5px;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
     text-align: center;
     font-size: 20px;
-    color: #f2f2f2;
+    color: var(--text_white);
 }

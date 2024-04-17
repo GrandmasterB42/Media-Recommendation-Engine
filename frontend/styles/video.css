@@ -8,7 +8,7 @@ body {
     display: flex;
     justify-content: center;
     margin-inline: auto;
-    background-color: black;
+    background-color: var(--background-color);
     transition: cursor 150ms ease-in-out;
 }
 
@@ -193,7 +193,7 @@ video {
     left: 0;
     bottom: 0;
     right: calc(100% - var(--preview-position) * 100%);
-    background-color: rgb(150, 150, 150);
+    background-color: var(--highlight_color);
     display: none;
 }
 
@@ -204,7 +204,7 @@ video {
     left: 0;
     bottom: 0;
     right: calc(100% - var(--progress-position) * 100%);
-    background-color: red;
+    background-color: var(--warning_color);
 }
 
 .timeline .indicator {
@@ -214,7 +214,7 @@ video {
     height: 200%;
     top: -50%;
     left: calc(var(--progress-position) * 100%);
-    background-color: red;
+    background-color: var(--warning_color);
     border-radius: 50%;
     transition: transform 150ms ease-in-out;
     aspect-ratio: 1/1;

@@ -11,7 +11,7 @@
     animation-name: fadeinout;
     animation-duration: 2.5s;
     border-radius: 4px;
-    background: linear-gradient(225deg, #171717, #1c1c1c);
+    background: var(--content_color);
 }
 
 @keyframes fadeinout {

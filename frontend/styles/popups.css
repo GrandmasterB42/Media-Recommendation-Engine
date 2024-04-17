@@ -10,5 +10,5 @@
     padding: 10px;
     margin: 10px;
     border-radius: 4px;
-    background: linear-gradient(225deg, #171717, #1c1c1c);
+    background-color: var(--content_color);
 }
