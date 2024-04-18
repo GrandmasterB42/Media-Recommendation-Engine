@@ -1,10 +1,6 @@
 <div>
     <link href="/styles/library.css" rel="stylesheet" />
-    <div class="session_heading" hx-get="/sessions" hx-trigger="every 1s">
-        {% for session in sessions %}
-        {{session|safe}}
-        {% endfor %}
-    </div>
+    <div class="session_heading" hx-ext="sse" sse-connect="/sessions" sse-swap="message"></div>
 
     <div class="gridcontainer">
         {% for franchise in franchises %}

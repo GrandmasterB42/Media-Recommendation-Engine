@@ -15,18 +15,17 @@ pub struct AppState {
 
 impl AppState {
     pub async fn new(database: Database) -> (Self, Cancellation, ServerSettings) {
-        let streaming_sessions = StreamingSessions::new();
-        let cancel = Cancellation(CancellationToken::new());
-        let cancellation = cancel.clone();
-        let serversettings = ServerSettings::new(cancel.clone(), database.clone()).await;
+        let cancellation = Cancellation(CancellationToken::new());
+        let streaming_sessions = StreamingSessions::new(cancellation.clone());
+        let serversettings = ServerSettings::new(cancellation.clone(), database.clone()).await;
         (
             Self {
                 database,
                 streaming_sessions,
-                cancellation,
+                cancellation: cancellation.clone(),
                 serversettings: serversettings.clone(),
             },
-            cancel,
+            cancellation,
             serversettings,
         )
     }

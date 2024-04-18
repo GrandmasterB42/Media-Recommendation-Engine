@@ -1,20 +1,26 @@
-use askama::Template;
+use std::convert::Infallible;
+
 use axum::{
     extract::{Path, State},
-    response::IntoResponse,
+    response::{
+        sse::{Event, KeepAlive},
+        IntoResponse, Sse,
+    },
     routing::get,
     Router,
 };
 
+use futures_util::{Stream, StreamExt};
 use serde::Deserialize;
+use tokio_stream::wrappers::WatchStream;
 
 use crate::{
     database::{Database, QueryRowGetConnExt, QueryRowIntoConnExt, QueryRowIntoStmtExt},
-    state::{AppResult, AppState},
+    state::{AppResult, AppState, Cancellation},
     utils::{
         frontend_redirect, frontend_redirect_explicit,
         templates::{GridElement, LargeImage, Library, PreviewTemplate},
-        ConvertErr, HXTarget,
+        HXTarget,
     },
 };
 
@@ -23,17 +29,13 @@ use super::StreamingSessions;
 pub fn library() -> Router<AppState> {
     Router::new()
         .route("/library", get(get_library))
-        .route("/sessions", get(get_sessions))
+        .route("/sessions", get(stream_sessions))
         .route("/preview/:preview/:id", get(preview))
 }
 
-async fn get_library(
-    State(sessions): State<StreamingSessions>,
-    State(db): State<Database>,
-) -> AppResult<impl IntoResponse> {
+async fn get_library(State(db): State<Database>) -> AppResult<impl IntoResponse> {
     let conn = db.get()?;
 
-    let sessions = render_sessions(sessions).await;
     let franchises = conn
         .prepare("SELECT id, title FROM franchise")?
         .query_map_into([])?
@@ -50,32 +52,21 @@ async fn get_library(
         })
         .collect::<Vec<_>>();
 
-    Ok(Library {
-        sessions,
-        franchises,
-    })
+    Ok(Library { franchises })
 }
 
-async fn get_sessions(State(sessions): State<StreamingSessions>) -> AppResult<impl IntoResponse> {
-    render_sessions(sessions)
-        .await
-        .iter()
-        .map(Template::render)
-        .collect::<Result<String, _>>()
-        .convert_err()
-}
-
-async fn render_sessions(sessions: StreamingSessions) -> Vec<GridElement> {
-    sessions
-        .get_sessions()
-        .await
-        .map(|(id, _session)| GridElement {
-            title: format!("Session {id}"),
-            redirect_entire: frontend_redirect(&format!("/video/session/{id}"), HXTarget::All),
-            redirect_img: String::new(),
-            redirect_title: String::new(),
+async fn stream_sessions(
+    State(sessions): State<StreamingSessions>,
+    State(cancel): State<Cancellation>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let resolve = |cancel: Cancellation| async move { cancel.cancelled().await };
+    let stream = WatchStream::new(sessions.render_receiver())
+        .map(|content| {
+            let content = content.replace('\r', "");
+            Ok(Event::default().data(content))
         })
-        .collect::<Vec<_>>()
+        .take_until(resolve(cancel));
+    Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]

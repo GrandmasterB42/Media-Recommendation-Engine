@@ -1,12 +1,15 @@
-use std::{collections::HashSet, ops::Deref};
+use std::{collections::HashSet, convert::Infallible, ops::Deref};
 
 use axum::{
     async_trait,
     body::Body,
     extract::{OriginalUri, Request},
-    http::{HeaderMap, Response, StatusCode},
+    http::{
+        header::{ACCEPT, LOCATION, REFERER},
+        HeaderMap, Response, StatusCode,
+    },
     middleware::Next,
-    response::IntoResponse,
+    response::{sse::Event, IntoResponse, Sse},
 };
 use axum_login::{
     tower_sessions::{
@@ -15,6 +18,7 @@ use axum_login::{
     },
     AuthUser, AuthnBackend, AuthzBackend, UserId,
 };
+use futures_util::stream;
 use rusqlite::{params, OptionalExtension};
 use serde::Deserialize;
 use time::OffsetDateTime;
@@ -372,7 +376,11 @@ pub async fn login_required(
     if auth.user.is_some() {
         return next.run(request).await.into_response();
     }
+    // TODO: There needs to be a better way to do all this
     let htmx_enabled = hm.get("HX-Request").is_some();
+    let is_sse = hm
+        .get(ACCEPT)
+        .is_some_and(|value| value == "text/event-stream");
 
     if htmx_enabled {
         let current = hm.get("HX-Current-Url");
@@ -387,9 +395,31 @@ pub async fn login_required(
             .unwrap_or(("", ""))
             .1;
         let redirect = format!("/auth/login?next=/{path}");
+
         (StatusCode::UNAUTHORIZED, [("HX-Redirect", redirect)]).into_response()
+    } else if is_sse {
+        let referer = hm
+            .get(REFERER)
+            .and_then(|current| current.to_str().ok())
+            .unwrap_or_default();
+        let path = referer
+            .split_once("//")
+            .unwrap_or(("", ""))
+            .1
+            .split_once('/')
+            .unwrap_or(("", ""))
+            .1;
+
+        async fn meta_redirect(path: String) -> Result<Event, Infallible> {
+            let content = format!(
+                "<div> <meta http-equiv=\"refresh\" content=\"0; url=/auth/login?next=/{path}\" /> </div>"
+            );
+            Ok(Event::default().data(content))
+        }
+        let stream = stream::once(meta_redirect(path.to_owned()));
+        Sse::new(stream).into_response()
     } else {
         let redirect = format!("/auth/login?next={uri}");
-        (StatusCode::SEE_OTHER, [("Location", redirect)]).into_response()
+        (StatusCode::SEE_OTHER, [(LOCATION, redirect)]).into_response()
     }
 }

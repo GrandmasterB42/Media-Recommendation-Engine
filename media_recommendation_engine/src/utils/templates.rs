@@ -59,7 +59,6 @@ pub enum Setting<'a> {
 #[derive(Template)]
 #[template(path = "../frontend/content/library.html")]
 pub struct Library {
-    pub sessions: Vec<GridElement>,
     pub franchises: Vec<GridElement>,
 }
 

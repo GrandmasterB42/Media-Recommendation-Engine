@@ -26,7 +26,7 @@ use futures_util::{
 };
 
 use serde::{Deserialize, Serialize};
-use tokio::sync::{broadcast, mpsc, Mutex, MutexGuard};
+use tokio::sync::{broadcast, mpsc, watch, Mutex, MutexGuard, Notify};
 use tower::Service;
 use tower_http::services::ServeFile;
 use tracing::{debug, error};
@@ -35,26 +35,46 @@ use crate::{
     database::{Database, QueryRowGetConnExt},
     state::{AppResult, AppState, Cancellation},
     utils::{
-        pseudo_random,
-        templates::{RecommendationPopup, Video},
-        AuthSession, HandleErr,
+        frontend_redirect, pseudo_random,
+        templates::{GridElement, RecommendationPopup, Video},
+        AuthSession, ConvertErr, HXTarget, HandleErr,
     },
 };
+
+type Sessions = Arc<Mutex<HashMap<u32, Arc<Session>>>>;
+
 #[derive(Clone)]
 pub struct StreamingSessions {
-    sessions: Arc<Mutex<HashMap<u32, Arc<Session>>>>,
+    sessions: Sessions,
+    rendered_sessions: (Arc<watch::Sender<String>>, watch::Receiver<String>),
+    should_rerender: Arc<Notify>,
 }
 
 impl StreamingSessions {
-    pub fn new() -> Self {
+    pub fn new(cancel: Cancellation) -> Self {
+        let sessions = Arc::new(Mutex::new(HashMap::new()));
+
+        let (sender, receiver) = watch::channel(String::new());
+        let sender = Arc::new(sender);
+
+        let notify = Arc::new(Notify::new());
+
+        tokio::task::spawn(Self::rerender_task(
+            notify.clone(),
+            sender.clone(),
+            sessions.clone(),
+            cancel,
+        ));
+
         Self {
-            sessions: Arc::new(Mutex::new(HashMap::new())),
+            sessions,
+            rendered_sessions: (sender, receiver),
+            should_rerender: notify,
         }
     }
 
-    pub async fn get_sessions(&self) -> impl Iterator<Item = (u32, Arc<Session>)> {
-        let iter = self
-            .sessions
+    pub async fn get_sessions(sessions: &Sessions) -> impl Iterator<Item = (u32, Arc<Session>)> {
+        let iter = sessions
             .lock()
             .await
             .iter()
@@ -77,10 +97,49 @@ impl StreamingSessions {
         {
             error!("A duplicate session was inserted!");
         };
+        self.should_rerender.notify_one();
     }
 
     async fn remove(&mut self, id: &u32) {
         self.sessions.lock().await.remove(id);
+        self.should_rerender.notify_one();
+    }
+
+    async fn rerender_task(
+        rerender: Arc<Notify>,
+        send: Arc<watch::Sender<String>>,
+        sessions: Sessions,
+        cancel: Cancellation,
+    ) {
+        loop {
+            tokio::select! {
+                _ = rerender.notified() => {}
+                _ = cancel.cancelled() => {return;}
+            }
+            let rendered = Self::render_sessions(&sessions)
+                .await
+                .log_err_with_msg("Failed to render sessions")
+                .unwrap_or_default();
+            send.send(rendered)
+                .log_err_with_msg("Failed to send renderes Session itno channel");
+        }
+    }
+
+    async fn render_sessions(sessions: &Sessions) -> AppResult<String> {
+        Self::get_sessions(sessions)
+            .await
+            .map(|(id, _session)| GridElement {
+                title: format!("Session {id}"),
+                redirect_entire: frontend_redirect(&format!("/video/session/{id}"), HXTarget::All),
+                redirect_img: String::new(),
+                redirect_title: String::new(),
+            })
+            .map(|el| el.render().convert_err())
+            .collect()
+    }
+
+    pub fn render_receiver(&self) -> watch::Receiver<String> {
+        self.rendered_sessions.0.subscribe()
     }
 }
 
@@ -98,7 +157,7 @@ pub struct Session {
 }
 
 impl Session {
-    async fn new(
+    fn new(
         db: &Database,
         video_id: u64,
         notification_sender: mpsc::Sender<Notification>,
@@ -370,7 +429,7 @@ async fn new_session(
         cancel,
     ));
 
-    let session = Session::new(&db, id, notification_sender, websocket_sender).await?;
+    let session = Session::new(&db, id, notification_sender, websocket_sender)?;
     sessions.insert(random, session).await;
 
     Ok(Redirect::temporary(&format!(

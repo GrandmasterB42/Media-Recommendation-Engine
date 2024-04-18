@@ -54,32 +54,26 @@ pub fn frontend_redirect_explicit(route: &str, target: HXTarget, push_url: Optio
 
 pub fn htmx() -> Router<AppState> {
     // TODO: LICENSE for Htmx?
-    // Doesn't need to be a ServeFile because it rarely changes
+    // This guarantees that these files exists and also probably has less overhead than something like ServeDir
     let htmx = std::fs::read_to_string(relative!("../frontend/scripts/htmx.js"))
         .expect("failed to read htmx into memory");
 
     let htmx_ws = std::fs::read_to_string(relative!("../frontend/scripts/ws.js"))
-        .expect("failed to read ws.js into memory");
+        .expect("failed to read the htmx websocket extension into memory");
+
+    let htmx_sse = std::fs::read_to_string(relative!("../frontend/scripts/sse.js"))
+        .expect("failed to read the htmx server sent events extensions into memory");
+
+    const JSHEADER: [(&str, &str); 1] = [("content-type", "application/javascript; charset=UTF-8")];
 
     Router::new()
-        .route(
-            "/htmx",
-            get(|| async {
-                (
-                    [("content-type", "application/javascript; charset=UTF-8")],
-                    htmx,
-                )
-                    .into_response()
-            }),
-        )
+        .route("/htmx", get(|| async { (JSHEADER, htmx).into_response() }))
         .route(
             "/htmx_ws",
-            get(|| async {
-                (
-                    [("content-type", "application/javascript; charset=UTF-8")],
-                    htmx_ws,
-                )
-                    .into_response()
-            }),
+            get(|| async { (JSHEADER, htmx_ws).into_response() }),
+        )
+        .route(
+            "/htmx_sse",
+            get(|| async { (JSHEADER, htmx_sse).into_response() }),
         )
 }
