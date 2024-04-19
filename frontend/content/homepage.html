@@ -14,9 +14,9 @@
         <ul class="dropdown-content">
             <li id="settings-element" class="dropdown-element" {{redirect_settings|safe}}>
                 <img src="/icons/settings.svg" />
-                <label id="settings-label" class="dropdown-label"> Settings  </label>
+                <label id="settings-label" class="dropdown-label"> Settings </label>
             </li>
-            <li id="logout-element" class="dropdown-element" hx-get="/auth/logout">
+            <li id="logout-element" class="dropdown-element" hx-post="/auth/logout">
                 <img src="/icons/logout.svg" />
                 <label id="logout-label" class="dropdown-label"> Logout </label>
             </li>

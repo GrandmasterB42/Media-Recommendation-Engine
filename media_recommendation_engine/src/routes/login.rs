@@ -23,7 +23,7 @@ pub fn login() -> Router<AppState> {
     Router::new()
         .route("/login", get(login_page))
         .route("/login/submit", post(login_form))
-        .route("/logout", get(logout))
+        .route("/logout", post(logout))
 }
 
 fn empty_string_as_none<'de, D, T>(de: D) -> Result<Option<T>, D::Error>
