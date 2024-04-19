@@ -2,7 +2,7 @@ use std::{path::Path, sync::Arc, time::SystemTime};
 
 use crate::{
     database::{Database, QueryRowGetConnExt, QueryRowGetStmtExt},
-    state::{AppResult, Cancellation},
+    state::{AppResult, Shutdown},
 };
 
 use serde::{Deserialize, Serialize};
@@ -56,7 +56,7 @@ pub struct ServerSettings {
 impl ServerSettings {
     const PATH: &'static str = "mreconfig.toml";
 
-    pub async fn new(cancel: Cancellation, db: Database) -> Self {
+    pub async fn new(shutdown: Shutdown, db: Database) -> Self {
         let config = if let Some(config_file) = tokio::fs::read_to_string(Self::PATH)
             .await
             .log_warn_with_msg("Failed to create config file, trying to create a new one")
@@ -88,7 +88,7 @@ impl ServerSettings {
 
             let mut copy = data.clone();
             tokio::spawn(async move {
-                copy.watch_file(cancel, db).await;
+                copy.watch_file(shutdown, db).await;
             });
         }
 
@@ -106,7 +106,7 @@ impl ServerSettings {
         }
     }
 
-    async fn watch_file(&mut self, cancel: Cancellation, db: Database) {
+    async fn watch_file(&mut self, shutdown: Shutdown, db: Database) {
         let mut last_changed = tokio::fs::metadata(Self::PATH)
             .await
             .unwrap()
@@ -181,7 +181,7 @@ impl ServerSettings {
                     debug!("Registered config file change");
                     (false, last)
                 },
-                _ = cancel.cancelled() => return,
+                _ = shutdown.cancelled() => return,
             };
             last_changed = l_c;
             update_file = u_f;

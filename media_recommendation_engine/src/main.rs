@@ -1,5 +1,4 @@
 #![feature(pattern)]
-#![feature(never_type)]
 
 extern crate ffmpeg_next as ffmpeg;
 
@@ -9,9 +8,10 @@ use axum_login::{
     tower_sessions::{session_store::ExpiredDeletion, Expiry, SessionManagerLayer},
     AuthManagerLayerBuilder,
 };
-use state::Cancellation;
+use futures_util::FutureExt;
+use state::Shutdown;
 use time::Duration;
-use tokio::{net::TcpListener, signal, task::JoinHandle};
+use tokio::{net::TcpListener, signal};
 
 use tower_sessions::cookie::Key;
 use tracing::{info, warn};
@@ -51,7 +51,20 @@ async fn main() {
         let args = &args[1..];
         warn!("provided invalid arguments: \"{args:?}\"");
     }
+    drop(args);
 
+    loop {
+        let should_restart = server().await;
+        if !should_restart {
+            break;
+        }
+        info!("Restarting...");
+    }
+
+    info!("Suceessfully shut down");
+}
+
+async fn server() -> bool {
     let db = Database::new().expect("failed to connect to database");
 
     let session_store = db.clone();
@@ -69,7 +82,7 @@ async fn main() {
 
     let auth = AuthManagerLayerBuilder::new(session_store, session_layer).build();
 
-    let (state, cancel, settings) = AppState::new(db.clone()).await;
+    let (state, shutdown, settings, restart) = AppState::new(db.clone()).await;
 
     let app = Router::new()
         .merge(tracing_layer())
@@ -96,17 +109,17 @@ async fn main() {
 
     info!("Starting server on {ip}");
 
-    let indexing = tokio::spawn(periodic_indexing(db, settings));
+    tokio::spawn(periodic_indexing(db, settings, shutdown.clone()));
 
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown(indexing, cancel))
+        .with_graceful_shutdown(shutdown_signal(shutdown))
         .await
         .expect("failed to start server");
 
-    info!("Suceessfully shut down");
+    restart.now_or_never().unwrap_or(Ok(false)).unwrap_or(false)
 }
 
-async fn shutdown(indexing: JoinHandle<!>, cancel: Cancellation) {
+async fn shutdown_signal(shutdown: Shutdown) {
     let ctrl_c = async {
         signal::ctrl_c()
             .await
@@ -124,16 +137,15 @@ async fn shutdown(indexing: JoinHandle<!>, cancel: Cancellation) {
     #[cfg(not(unix))]
     let terminate = std::future::pending::<()>();
 
-    let dontcancel = tokio::select! {
-        _ = cancel.cancelled() => true,
-        _ = ctrl_c => false,
-        _ = terminate => false,
+    let should_cancel = tokio::select! {
+        _ = shutdown.cancelled() => false,
+        _ = ctrl_c => true,
+        _ = terminate => true,
     };
 
     info!("Starting to shut down...");
 
-    indexing.abort();
-    if !dontcancel {
-        cancel.cancel();
+    if should_cancel {
+        shutdown.shutdown();
     }
 }

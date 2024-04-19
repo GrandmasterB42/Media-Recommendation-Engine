@@ -1,6 +1,11 @@
-use std::{error::Error, fmt::Display, ops::Deref};
+use std::{
+    error::Error,
+    fmt::Display,
+    sync::{Arc, Mutex},
+};
 
 use axum::{extract::FromRef, http, response::IntoResponse};
+use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
 use crate::{database::Database, routes::StreamingSessions, utils::ServerSettings};
@@ -9,24 +14,27 @@ use crate::{database::Database, routes::StreamingSessions, utils::ServerSettings
 pub struct AppState {
     database: Database,
     streaming_sessions: StreamingSessions,
-    cancellation: Cancellation,
+    shutdown: Shutdown,
     serversettings: ServerSettings,
 }
 
 impl AppState {
-    pub async fn new(database: Database) -> (Self, Cancellation, ServerSettings) {
-        let cancellation = Cancellation(CancellationToken::new());
-        let streaming_sessions = StreamingSessions::new(cancellation.clone());
-        let serversettings = ServerSettings::new(cancellation.clone(), database.clone()).await;
+    pub async fn new(
+        database: Database,
+    ) -> (Self, Shutdown, ServerSettings, oneshot::Receiver<bool>) {
+        let (shutdown, restart_receiver) = Shutdown::new();
+        let streaming_sessions = StreamingSessions::new(shutdown.clone());
+        let serversettings = ServerSettings::new(shutdown.clone(), database.clone()).await;
         (
             Self {
                 database,
                 streaming_sessions,
-                cancellation: cancellation.clone(),
+                shutdown: shutdown.clone(),
                 serversettings: serversettings.clone(),
             },
-            cancellation,
+            shutdown,
             serversettings,
+            restart_receiver,
         )
     }
 }
@@ -43,9 +51,9 @@ impl FromRef<AppState> for StreamingSessions {
     }
 }
 
-impl FromRef<AppState> for Cancellation {
-    fn from_ref(state: &AppState) -> Cancellation {
-        state.cancellation.clone()
+impl FromRef<AppState> for Shutdown {
+    fn from_ref(state: &AppState) -> Self {
+        state.shutdown.clone()
     }
 }
 
@@ -56,13 +64,48 @@ impl FromRef<AppState> for ServerSettings {
 }
 
 #[derive(Clone)]
-pub struct Cancellation(CancellationToken);
+pub struct Shutdown {
+    cancellation: CancellationToken,
+    restart_sender: Arc<Mutex<Option<oneshot::Sender<bool>>>>,
+}
 
-impl Deref for Cancellation {
-    type Target = CancellationToken;
+impl Shutdown {
+    fn new() -> (Self, oneshot::Receiver<bool>) {
+        let (restart_sender, restart_receiver) = oneshot::channel();
+        let cancellation = CancellationToken::new();
+        let shutdown = Self {
+            cancellation,
+            restart_sender: Arc::new(Mutex::new(Some(restart_sender))),
+        };
+        (shutdown, restart_receiver)
+    }
 
-    fn deref(&self) -> &Self::Target {
-        &self.0
+    /// This function can panic if either it, or restart have been called in this applications lifecycle
+    pub fn shutdown(&self) {
+        self.restart_sender
+            .lock()
+            .unwrap()
+            .take()
+            .unwrap()
+            .send(false)
+            .unwrap();
+        self.cancellation.cancel();
+    }
+
+    /// This function can panic if either it, or shutdown have been called in this applications lifecycle
+    pub fn restart(&self) {
+        self.restart_sender
+            .lock()
+            .unwrap()
+            .take()
+            .unwrap()
+            .send(true)
+            .unwrap();
+        self.cancellation.cancel();
+    }
+
+    pub async fn cancelled(&self) {
+        self.cancellation.cancelled().await;
     }
 }
 

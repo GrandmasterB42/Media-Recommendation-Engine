@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use askama_axum::IntoResponse;
 use axum::{
     extract::State,
@@ -11,7 +9,7 @@ use serde::Deserialize;
 
 use crate::{
     database::{Database, QueryRowGetConnExt},
-    state::{AppResult, AppState, Cancellation},
+    state::{AppResult, AppState, Shutdown},
     utils::{
         frontend_redirect,
         templates::{Setting, Settings, SwapIn},
@@ -54,22 +52,30 @@ async fn settings_page(auth: AuthSession) -> AppResult<impl IntoResponse> {
     })
 }
 
+// Turning these two function below into one with a const generic didn't seem to work properly. But this does, so I don't care
 async fn shutdown(
     auth: AuthSession,
-    State(cancel): State<Cancellation>,
+    State(shutdown): State<Shutdown>,
 ) -> AppResult<impl IntoResponse> {
     if auth.has_perm("owner").await? {
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            cancel.cancel();
-        });
+        shutdown.shutdown();
         Ok(StatusCode::ACCEPTED)
     } else {
         Ok(StatusCode::UNAUTHORIZED)
     }
 }
 
-async fn restart() {}
+async fn restart(
+    auth: AuthSession,
+    State(shutdown): State<Shutdown>,
+) -> AppResult<impl IntoResponse> {
+    if auth.has_perm("owner").await? {
+        shutdown.restart();
+        Ok(StatusCode::ACCEPTED)
+    } else {
+        Ok(StatusCode::UNAUTHORIZED)
+    }
+}
 
 #[derive(Deserialize)]
 struct ChangeUsername {

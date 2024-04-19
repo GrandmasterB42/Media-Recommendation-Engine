@@ -16,7 +16,7 @@ use tokio_stream::wrappers::WatchStream;
 
 use crate::{
     database::{Database, QueryRowGetConnExt, QueryRowIntoConnExt, QueryRowIntoStmtExt},
-    state::{AppResult, AppState, Cancellation},
+    state::{AppResult, AppState, Shutdown},
     utils::{
         frontend_redirect, frontend_redirect_explicit,
         templates::{GridElement, LargeImage, Library, PreviewTemplate},
@@ -57,15 +57,15 @@ async fn get_library(State(db): State<Database>) -> AppResult<impl IntoResponse>
 
 async fn stream_sessions(
     State(sessions): State<StreamingSessions>,
-    State(cancel): State<Cancellation>,
+    State(shutdown): State<Shutdown>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let resolve = |cancel: Cancellation| async move { cancel.cancelled().await };
+    let resolve = |shutdown: Shutdown| async move { shutdown.cancelled().await };
     let stream = WatchStream::new(sessions.render_receiver())
         .map(|content| {
             let content = content.replace('\r', "");
             Ok(Event::default().data(content))
         })
-        .take_until(resolve(cancel));
+        .take_until(resolve(shutdown));
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 

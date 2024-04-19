@@ -33,7 +33,7 @@ use tracing::{debug, error};
 
 use crate::{
     database::{Database, QueryRowGetConnExt},
-    state::{AppResult, AppState, Cancellation},
+    state::{AppResult, AppState, Shutdown},
     utils::{
         frontend_redirect, pseudo_random,
         templates::{GridElement, RecommendationPopup, Video},
@@ -51,7 +51,7 @@ pub struct StreamingSessions {
 }
 
 impl StreamingSessions {
-    pub fn new(cancel: Cancellation) -> Self {
+    pub fn new(shutdown: Shutdown) -> Self {
         let sessions = Arc::new(Mutex::new(HashMap::new()));
 
         let (sender, receiver) = watch::channel(String::new());
@@ -63,7 +63,7 @@ impl StreamingSessions {
             notify.clone(),
             sender.clone(),
             sessions.clone(),
-            cancel,
+            shutdown,
         ));
 
         Self {
@@ -109,12 +109,12 @@ impl StreamingSessions {
         rerender: Arc<Notify>,
         send: Arc<watch::Sender<String>>,
         sessions: Sessions,
-        cancel: Cancellation,
+        shutdown: Shutdown,
     ) {
         loop {
             tokio::select! {
                 _ = rerender.notified() => {}
-                _ = cancel.cancelled() => {return;}
+                _ = shutdown.cancelled() => {return;}
             }
             let rendered = Self::render_sessions(&sessions)
                 .await
@@ -394,7 +394,7 @@ pub fn streaming() -> Router<AppState> {
 async fn content(
     Path(id): Path<u32>,
     State(sessions): State<StreamingSessions>,
-    State(cancel): State<Cancellation>,
+    State(shutdown): State<Shutdown>,
     request: Request<Body>,
 ) -> Result<impl IntoResponse, impl IntoResponse> {
     let Some(session) = sessions.get(&id).await else {
@@ -404,7 +404,7 @@ async fn content(
 
     tokio::select! {
         resp = stream.call(request) => Ok(resp.into_response()),
-        _  = cancel.cancelled() => Err(StatusCode::REQUEST_TIMEOUT.into_response())
+        _  = shutdown.cancelled() => Err(StatusCode::REQUEST_TIMEOUT.into_response())
     }
 }
 
@@ -412,7 +412,7 @@ async fn new_session(
     Path(id): Path<u64>,
     State(mut sessions): State<StreamingSessions>,
     State(db): State<Database>,
-    State(cancel): State<Cancellation>,
+    State(shutdown): State<Shutdown>,
 ) -> AppResult<impl IntoResponse> {
     let random = loop {
         let random = pseudo_random();
@@ -426,7 +426,7 @@ async fn new_session(
     tokio::spawn(notifier(
         notification_receiver,
         websocket_sender.clone(),
-        cancel,
+        shutdown,
     ));
 
     let session = Session::new(&db, id, notification_sender, websocket_sender)?;
@@ -442,10 +442,10 @@ async fn ws_session(
     Path(id): Path<u32>,
     State(sessions): State<StreamingSessions>,
     State(db): State<Database>,
-    State(cancel): State<Cancellation>,
+    State(shutdown): State<Shutdown>,
     auth: AuthSession,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| ws_session_callback(socket, id, sessions, db, cancel, auth))
+    ws.on_upgrade(move |socket| ws_session_callback(socket, id, sessions, db, shutdown, auth))
 }
 
 // TODO: Decouple notification from the template and move it
@@ -470,7 +470,7 @@ async fn ws_session_callback(
     id: u32,
     mut sessions: StreamingSessions,
     db: Database,
-    cancel: Cancellation,
+    shutdown: Shutdown,
     auth: AuthSession,
 ) {
     let user = auth.user.unwrap();
@@ -541,7 +541,7 @@ async fn ws_session_callback(
         );
 
     tokio::select! {
-        _ = cancel.cancelled() => {send_task.abort(); recv_task.abort()}
+        _ = shutdown.cancelled() => {send_task.abort(); recv_task.abort()}
         _ = (&mut send_task) => {recv_task.abort()}
         _ = (&mut recv_task) => {send_task.abort()}
     }
@@ -736,7 +736,7 @@ impl NotificationQueue {
 async fn notifier(
     mut receiver: mpsc::Receiver<Notification>,
     session_sender: broadcast::Sender<WSMessage>,
-    cancel: Cancellation,
+    shutdown: Shutdown,
 ) {
     let mut seek_queue = NotificationQueue::new();
     let mut toggle_queue = NotificationQueue::new();
@@ -750,7 +750,7 @@ async fn notifier(
                 notification = noti;
                 true
             },
-            _ = cancel.cancelled() => false,
+            _ = shutdown.cancelled() => false,
         }
     } {
         if let Some(new_notification) = notification {
