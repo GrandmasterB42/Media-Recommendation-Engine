@@ -20,11 +20,9 @@ use crate::{
     utils::{
         frontend_redirect, frontend_redirect_explicit,
         templates::{GridElement, LargeImage, Library, PreviewTemplate},
-        HXTarget,
+        HXTarget, StreamingSessions,
     },
 };
-
-use super::StreamingSessions;
 
 pub fn library() -> Router<AppState> {
     Router::new()

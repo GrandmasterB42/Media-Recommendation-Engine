@@ -8,7 +8,10 @@ use axum::{extract::FromRef, http, response::IntoResponse};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
-use crate::{database::Database, routes::StreamingSessions, utils::ServerSettings};
+use crate::{
+    database::Database,
+    utils::{ServerSettings, StreamingSessions},
+};
 
 #[derive(Clone)]
 pub struct AppState {

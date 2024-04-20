@@ -110,6 +110,13 @@ pub struct Video {
     pub id: u64,
 }
 
+#[derive(Template)]
+#[template(path = "../frontend/content/notification.html")]
+pub struct Notification {
+    pub msg: String,
+    pub script: String,
+}
+
 #[derive(Template, Clone)]
 #[template(path = "../frontend/content/recommendation_popup.html")]
 pub struct RecommendationPopup {

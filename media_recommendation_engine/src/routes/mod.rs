@@ -12,7 +12,7 @@ pub use homepage::homepage;
 pub use library::library;
 pub use login::login;
 pub use settings::settings;
-pub use streaming::{streaming, StreamingSessions};
+pub use streaming::streaming;
 
 use crate::state::AppState;
 use axum::{
