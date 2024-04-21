@@ -15,8 +15,9 @@ use crate::{
     database::Database,
     state::{AppResult, AppState, Shutdown},
     utils::{
+        streaming::{Session, StreamingSessions},
         templates::{Notification, Video},
-        AuthSession, HandleErr, Session, StreamingSessions,
+        AuthSession, HandleErr,
     },
 };
 
@@ -86,7 +87,7 @@ async fn ws_session_callback(
                 Notification {
                     msg: "This session seems to be invalid... Falling back to previous page"
                         .to_owned(),
-                    script: "/scripts/back.js".to_owned(),
+                    script: "/scripts/back.js",
                 }
                 .render()
                 .unwrap(),

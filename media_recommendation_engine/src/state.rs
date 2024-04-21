@@ -10,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     database::Database,
-    utils::{ServerSettings, StreamingSessions},
+    utils::{streaming::StreamingSessions, ServerSettings},
 };
 
 #[derive(Clone)]
