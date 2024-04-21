@@ -20,8 +20,7 @@ pub mod templates;
 mod settings;
 pub use settings::ServerSettings;
 
-mod streaming;
-pub use streaming::{Session, StreamingSessions};
+pub mod streaming;
 
 macro_rules! relative {
     ($path:expr) => {

@@ -97,9 +97,9 @@ pub struct Video {
 
 #[derive(Template)]
 #[template(path = "../frontend/content/notification.html")]
-pub struct Notification {
+pub struct Notification<'a> {
     pub msg: String,
-    pub script: String,
+    pub script: &'a str,
 }
 
 #[derive(Template, Clone)]

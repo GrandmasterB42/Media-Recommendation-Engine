@@ -19,8 +19,9 @@ use crate::{
     state::{AppResult, AppState, Shutdown},
     utils::{
         frontend_redirect, frontend_redirect_explicit,
+        streaming::StreamingSessions,
         templates::{GridElement, LargeImage, Library, PreviewTemplate},
-        HXTarget, StreamingSessions,
+        HXTarget,
     },
 };
 
