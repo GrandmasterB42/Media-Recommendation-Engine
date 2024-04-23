@@ -126,9 +126,8 @@ h3 {
     letter-spacing: 0.5px;
 }
 
-.change-user {
-    display: flex;
-    flex-direction: column;
+.change-user,
+.creation_wrapper {
     padding: 10px;
 }
 
@@ -162,7 +161,8 @@ button[type="submit"]:hover {
     cursor: pointer;
 }
 
-#error {
+#error,
+#creation_error {
     background-color: var(--warning_color);
     border-radius: 3px;
     margin-top: 5px;
@@ -171,14 +171,74 @@ button[type="submit"]:hover {
     text-align: center;
 }
 
-#error:empty {
+#error:empty,
+#creation_error:empty {
     display: none;
+}
+
+.user_wrapper {
+    background-color: var(--foreground_color);
+    border-radius: 5px;
+    width: 100%;
+    margin-bottom: 5px;
+}
+
+.user_wrapper>h3 {
+    line-height: 0px;
+    padding-left: 5px;
+}
+
+#user_form {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.creation_input {
+    padding: 5px;
+}
+
+.creation_input>button {
+    background-color: var(--normal_green);
+}
+
+.creation_input>button:hover {
+    background-color: var(--highlighted_green);
+}
+
+#user_list {
+    border: solid;
+    border-color: var(--highlight_color);
+    border-radius: 4px;
+    margin: 4px;
+}
+
+.user_entry {
+    margin: 2px 6px;
+    padding: 4px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border: dotted;
+    border-color: var(--highlight_color);
+    border-radius: 4px;
+    border-width: 2px;
+}
+
+.user_entry>button {
+    background-color: var(--warning_color);
+    border: none;
+    border-radius: 3px;
+}
+
+.user_entry>button:hover {
+    background-color: var(--highlight_red);
+    cursor: pointer;
 }
 
 .danger {
     width: 100%;
     background-color: var(--warning_color);
-    padding: 5px;
     border-radius: 6px;
 }
 

@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use askama::Template;
 
 #[derive(Template)]
@@ -34,7 +36,7 @@ pub struct Error<'a> {
 }
 
 #[derive(Template)]
-#[template(path = "../frontend/content/settings.html")]
+#[template(path = "../frontend/content/settings/settings.html")]
 pub struct Settings<'a> {
     pub admin_settings: Option<Vec<Setting<'a>>>,
     pub account_settings: Vec<Setting<'a>>,
@@ -43,7 +45,7 @@ pub struct Settings<'a> {
 }
 
 #[derive(Template)]
-#[template(path = "../frontend/content/setting.html")]
+#[template(path = "../frontend/content/settings/setting.html")]
 pub enum Setting<'a> {
     TextSetting {
         prompt: &'a str,
@@ -54,6 +56,20 @@ pub enum Setting<'a> {
         class: &'a str,
         action: &'a str,
     },
+}
+
+#[derive(Template)]
+#[template(path = "../frontend/content/settings/user_creation.html")]
+pub struct UserCreation {
+    pub users: Vec<UserEntry>,
+}
+
+#[derive(Template)]
+#[template(path = "../frontend/content/settings/user_entry.html")]
+pub struct UserEntry {
+    pub user_id: u64,
+    pub name: String,
+    pub can_delete: bool,
 }
 
 #[derive(Template)]
@@ -105,7 +121,11 @@ pub struct RecommendationPopup {
 
 #[derive(Template, Clone)]
 #[template(path = "../frontend/content/swap_in.html")]
-pub struct SwapIn<'a> {
+pub struct SwapIn<'a, T>
+where
+    T: Display,
+{
     pub swap_id: &'a str,
-    pub content: &'a str,
+    pub swap_method: Option<&'a str>,
+    pub content: T,
 }

@@ -1,3 +1,4 @@
-<div id="{{ swap_id|safe }}" hx-swap-oob="true">
+<div id="{{ swap_id|safe }}"
+    hx-swap-oob="{% if let Some(swap_method) = swap_method %}{{ swap_method }}{% else %}innerHTML{% endif %}">
     {{ content|safe }}
 </div>

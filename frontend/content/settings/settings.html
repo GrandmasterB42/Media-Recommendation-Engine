@@ -57,7 +57,7 @@
             <div class="section admin_settings">
                 <h2> Admin Settings </h2>
 
-                User addition will go here
+                <div hx-trigger="load" hx-get="/settings/users" class="user_wrapper"> </div>
 
                 {% for setting in admin_settings %}
                 {{ setting|safe }}

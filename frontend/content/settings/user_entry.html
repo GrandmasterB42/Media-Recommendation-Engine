@@ -1,0 +1,8 @@
+<div id="user_{{user_id}}" class="user_entry">
+    {{ name }}
+    {% if can_delete %}
+    <button type="button" hx-delete="/settings/user/{{user_id}}" hx-target="#user_{{user_id}}" hx-swap="outerHTML">
+        <img src="/icons/delete.svg" />
+    </button>
+    {% endif %}
+</div>
