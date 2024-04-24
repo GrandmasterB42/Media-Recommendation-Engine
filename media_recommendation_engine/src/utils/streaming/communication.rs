@@ -241,8 +241,10 @@ impl SessionChannel {
             _ = (&mut recv_task) => {send_task.abort()}
         }
 
-        self.send_text_notification(format!("{} left the session", user.username), user_id)
-            .await;
+        if session.receiver_count().await != 1 {
+            self.send_text_notification(format!("{} left the session", user.username), user_id)
+                .await;
+        }
     }
 
     async fn send_session_to_clients(
