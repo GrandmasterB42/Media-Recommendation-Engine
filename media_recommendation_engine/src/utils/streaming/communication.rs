@@ -11,7 +11,7 @@ use futures_util::{
     SinkExt, StreamExt,
 };
 use serde::{Deserialize, Serialize};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, Notify};
 use tracing::debug;
 
 use crate::{
@@ -36,9 +36,6 @@ pub enum WSSend {
         video_time: f32,
         state: SessionState,
     },
-    RequestNext {
-        at_greater_than: f32,
-    },
     Reload,
     Join,
 }
@@ -52,7 +49,6 @@ pub enum WSReceive {
         video_time: f32,
         state: SessionState,
     },
-    SendNext,
     SwitchTo {
         id: u64,
     },
@@ -83,8 +79,9 @@ struct Notification {
 
 #[derive(Clone)]
 pub struct SessionChannel {
-    to_websocket: broadcast::Sender<WSSend>,
+    pub to_websocket: broadcast::Sender<WSSend>,
     to_notification_limiter: mpsc::Sender<Notification>,
+    pub has_switched: Arc<Notify>,
     shutdown: Shutdown,
 }
 
@@ -96,6 +93,7 @@ impl SessionChannel {
         let channel = Self {
             to_websocket: websocket_sender,
             to_notification_limiter: notification_sender,
+            has_switched: Notify::new().into(),
             shutdown,
         };
 
@@ -105,7 +103,7 @@ impl SessionChannel {
         channel
     }
 
-    fn send(&self, msg: WSSend) {
+    pub fn send(&self, msg: WSSend) {
         self.to_websocket
             .send(msg)
             .log_err_with_msg("Failed to send message to websocket broadcast");
@@ -213,7 +211,7 @@ impl SessionChannel {
                         .log_err_with_msg("Failed to get current systemtime")
                         .unwrap_or_default()
                         .as_secs(),
-                    video_time: session.get_current_video_time().await,
+                    video_time: session.get_current_video_time().await as f32,
                     state: session.get_state().await,
                 })
                 .unwrap(),
@@ -355,7 +353,7 @@ impl SessionChannel {
                     timestamp,
                     video_time,
                     state,
-                })
+                });
             }
             WSReceive::Join => {
                 self.send(WSSend::Update {
@@ -365,31 +363,17 @@ impl SessionChannel {
                     state: session.get_state().await,
                 });
 
-                let at_greater_than = session.when_to_recommend().await;
-                self.send(WSSend::RequestNext { at_greater_than });
-
                 let username = &user.username;
                 self.send_text_notification(format!("{username} joined the session"), user_id)
                     .await;
                 self.send(WSSend::Join);
             }
-            WSReceive::SendNext => {
-                let popup = session.get_popup().await?;
-
-                let msg = WSSend::Notification {
-                    msg: popup,
-                    origin: user_id,
-                };
-
-                self.send(msg);
-            }
             WSReceive::SwitchTo { id } => {
                 session.reuse(id).await.log_err();
 
-                self.send(WSSend::Reload);
+                self.has_switched.notify_one();
 
-                let at_greater_than = session.when_to_recommend().await;
-                self.send(WSSend::RequestNext { at_greater_than });
+                self.send(WSSend::Reload);
             }
         }
 
