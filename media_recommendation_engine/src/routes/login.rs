@@ -5,7 +5,6 @@ use askama_axum::IntoResponse;
 use axum::{
     extract::Query,
     http::StatusCode,
-    response::Redirect,
     routing::{get, post},
     Form, Router,
 };
@@ -14,7 +13,7 @@ use serde::{de, Deserialize, Deserializer};
 use crate::{
     state::{AppResult, AppState},
     utils::{
-        templates::{Index, LoginPage},
+        templates::{Index, LoginPage, SwapIn},
         AuthSession, Credentials, HandleErr,
     },
 };
@@ -48,13 +47,10 @@ struct Next {
 #[derive(Deserialize)]
 struct Params {
     #[serde(default, deserialize_with = "empty_string_as_none")]
-    message: Option<String>,
-    #[serde(default, deserialize_with = "empty_string_as_none")]
     next: Option<String>,
 }
 
 async fn login_page(Query(params): Query<Params>) -> AppResult<impl IntoResponse> {
-    let message = params.message;
     let next = params.next;
 
     let post_url = &match next {
@@ -66,7 +62,6 @@ async fn login_page(Query(params): Query<Params>) -> AppResult<impl IntoResponse
         title: "Login",
         post_url,
         sub_text: None,
-        message,
     };
     let body = login_page.render()?;
 
@@ -84,11 +79,15 @@ async fn login_form(
     let user = match auth.authenticate(creds).await {
         Ok(Some(user)) => user,
         Ok(None) => {
-            let redirect = match next.next {
-                Some(next) => format!("/auth/login?message=Wrong Credentials&next={next}"),
-                None => "/auth/login?message=Wrong Credentials".to_owned(),
-            };
-            return Redirect::to(&redirect).into_response();
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                SwapIn {
+                    swap_id: "error",
+                    swap_method: None,
+                    content: "Wrong Credentials!",
+                },
+            )
+                .into_response()
         }
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
@@ -99,7 +98,7 @@ async fn login_form(
 
     let redirect = next.next.unwrap_or("/".to_owned());
 
-    Redirect::to(&redirect).into_response()
+    (StatusCode::OK, [("HX-Redirect", redirect)]).into_response()
 }
 
 async fn logout(mut auth: AuthSession) -> impl IntoResponse {

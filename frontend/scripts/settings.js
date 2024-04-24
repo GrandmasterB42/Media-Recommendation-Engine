@@ -1,10 +1,3 @@
-document.body.addEventListener("htmx:beforeSwap", (event) => {
-    if (event.detail.xhr.status === 422) {
-        event.detail.shouldSwap = true;
-        event.detail.isError = false;
-    }
-});
-
 var user_changes = document.getElementsByClassName("change-form");
 for (let i = 0; i < user_changes.length; i++) {
     user_changes[i].addEventListener("htmx:afterRequest", (event) => {

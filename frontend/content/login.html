@@ -1,7 +1,7 @@
 <div>
     <link href="/styles/login.css" rel="stylesheet" />
     <div class="login_container">
-        <form action="{{post_url}}" method="post" autocomplete="off" class="login_form">
+        <form hx-post="{{post_url}}" autocomplete="off" class="login_form" hx-swap="none">
             <div class="login_heading"> {{title}} </div>
             <div class="login_input">
                 <input type="text" name="username" placeholder="Username" required>
@@ -13,9 +13,7 @@
                 <button type="submit"> Submit </button>
             </div>
         </form>
-        {% if let Some(message) = message %}
-        <div class="message"> {{message}} </div>
-        {% endif %}
+        <div id="error"></div>
         {% if let Some(sub_text) = sub_text %}
         <div class="login_subtext"> {{sub_text|safe}} </div>
         {% endif %}

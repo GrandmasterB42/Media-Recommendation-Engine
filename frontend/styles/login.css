@@ -47,3 +47,14 @@
     background-color: var(--highlight_color);
     cursor: pointer;
 }
+
+#error {
+    background-color: var(--warning_color);
+    border-radius: 3px;
+    padding: 5px;
+    text-align: center;
+}
+
+#error:empty {
+    display: none;
+}

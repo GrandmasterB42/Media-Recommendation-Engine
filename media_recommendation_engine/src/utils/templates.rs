@@ -15,7 +15,6 @@ pub struct LoginPage<'a> {
     pub title: &'a str,
     pub post_url: &'a str,
     pub sub_text: Option<&'a str>,
-    pub message: Option<String>,
 }
 
 #[derive(Template)]
