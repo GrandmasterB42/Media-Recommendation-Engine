@@ -6,8 +6,6 @@ temp_video.replaceWith(temp_video.cloneNode(true));
 const video = document.getElementById("currentvideo");
 const videocontainer = document.querySelector(".video-container");
 
-let rn = Infinity;
-
 document.body.addEventListener("htmx:wsBeforeMessage", (event) => {
     try {
         let data = JSON.parse(event.detail.message);
@@ -83,8 +81,6 @@ function handleServerEvent(data) {
         } else if (update_type == "Update" && active) {
             adjustvideo(state, time, elapsed_since_send);
         }
-    } else if (type == "RequestNext") {
-        rn = data.at_greater_than;
     } else if (type == "Reload") {
         reload();
     } else {
@@ -209,14 +205,6 @@ video.addEventListener("timeupdate", () => {
     currenttime.textContent = formatDuration(video.currentTime);
     const percent = video.currentTime / video.duration;
     timelinecontainer.style.setProperty("--progress-position", percent);
-
-    if (rn <= video.currentTime) {
-        let message = {
-            "type": "SendNext"
-        };
-        ws.send(JSON.stringify(message));
-        rn = Infinity;
-    }
 })
 
 const leadingZeroFormatter = new Intl.NumberFormat(undefined, {

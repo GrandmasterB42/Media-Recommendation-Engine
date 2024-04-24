@@ -1,4 +1,12 @@
-use std::{collections::HashMap, pin::Pin, sync::Arc, time::SystemTime};
+use std::{
+    collections::HashMap,
+    pin::Pin,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::{Duration, SystemTime},
+};
 
 use askama::Template;
 use axum::{
@@ -11,11 +19,11 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{watch, Mutex, Notify};
 use tower::Service;
 use tower_http::services::ServeFile;
-use tracing::error;
+use tracing::{error, warn};
 
 use crate::{
     database::{Database, QueryRowGetConnExt},
-    state::{AppResult, Shutdown},
+    state::{AppError, AppResult, Shutdown},
     utils::{
         auth::User,
         frontend_redirect, pseudo_random,
@@ -24,7 +32,7 @@ use crate::{
     },
 };
 
-use super::communication::{SessionChannel, UserSessionID};
+use super::communication::{SessionChannel, UserSessionID, WSSend};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum SessionState {
@@ -160,8 +168,8 @@ pub struct Session {
     receivers: Mutex<Vec<(User, UserSessionID)>>,
     channel: SessionChannel,
     state: Mutex<SessionState>,
-    time_estimate: Mutex<TimeKeeper>,
-    next_recommended: Mutex<RecommendationPopupState>,
+    time_estimate: Arc<TimeKeeper>,
+    next_recommended: Arc<Mutex<RecommendationPopupState>>,
     db: Database,
     pub shutdown: Shutdown,
 }
@@ -177,22 +185,33 @@ impl Session {
         let media_context = ffmpeg::format::input(&file_path)?;
         let total_time = media_context.duration() as f64 / f64::from(ffmpeg::ffi::AV_TIME_BASE);
 
-        let time_estimate = Mutex::new(TimeKeeper::new(total_time));
+        let channel = SessionChannel::new(shutdown.clone());
 
-        let next_recommended = Mutex::new(RecommendationPopupState::new(db, video_id));
+        let time_estimate = Arc::new(TimeKeeper::new(total_time));
 
-        Ok(Self {
+        let next_recommended = Arc::new(Mutex::new(RecommendationPopupState::new(db, video_id)));
+
+        Self::send_recommendations(
+            time_estimate.clone(),
+            channel.clone(),
+            next_recommended.clone(),
+            shutdown.clone(),
+        );
+
+        let session = Self {
             video_id: Mutex::new(video_id),
             file_path: Mutex::new(file_path),
             stream: Mutex::new(stream),
             receivers: Mutex::new(Vec::new()),
-            channel: SessionChannel::new(shutdown.clone()),
+            channel,
             state: Mutex::new(SessionState::Playing),
             time_estimate,
             next_recommended,
             db: db.clone(),
             shutdown,
-        })
+        };
+
+        Ok(session)
     }
 
     pub async fn reuse(&self, video_id: u64) -> AppResult<()> {
@@ -211,7 +230,7 @@ impl Session {
         let media_context = ffmpeg::format::input(&file_path)?;
         let total_time = media_context.duration() as f64 / f64::from(ffmpeg::ffi::AV_TIME_BASE);
 
-        *self.time_estimate.lock().await = TimeKeeper::new(total_time);
+        self.time_estimate.reset(total_time).await;
         *self.next_recommended.lock().await = RecommendationPopupState::new(&self.db, video_id);
 
         let serve_file = ServeFile::new(&file_path);
@@ -252,21 +271,11 @@ impl Session {
     }
 
     pub async fn update_timekeeper(&self, time: f64, state: SessionState) {
-        let mut timekeeper = self.time_estimate.lock().await;
-        timekeeper.update(time, state);
+        self.time_estimate.update(time, state).await;
     }
 
-    pub async fn get_current_video_time(&self) -> f32 {
-        self.time_estimate.lock().await.current_estimate() as f32
-    }
-
-    pub async fn get_popup(&self) -> AppResult<String> {
-        self.next_recommended.lock().await.get_popup().await
-    }
-
-    pub async fn when_to_recommend(&self) -> f32 {
-        let timekeeper = self.time_estimate.lock().await;
-        timekeeper.total_time as f32 * 0.95
+    pub async fn get_current_video_time(&self) -> f64 {
+        self.time_estimate.current_estimate().await
     }
 
     /// Returns when the user disonnects, the returned bool indicates whether the session is now empty
@@ -301,44 +310,115 @@ impl Session {
 
         false
     }
+
+    fn send_recommendations(
+        timekeeper: Arc<TimeKeeper>,
+        channel: SessionChannel,
+        popup: Arc<Mutex<RecommendationPopupState>>,
+        shutdown: Shutdown,
+    ) {
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = TimeKeeper::recommend_now(timekeeper.clone(), shutdown.clone()) => {},
+                    _ = shutdown.cancelled() => break,
+                }
+
+                let Ok(popup) = popup.lock().await.get_popup().await else {
+                    warn!("Rendering a recommendation popup failed!");
+                    continue;
+                };
+                let msg = WSSend::Notification {
+                    msg: popup,
+                    origin: u32::MAX, // Probably unlikely, doesn't matter for now
+                };
+
+                let Ok(_) = channel.to_websocket.send(msg) else {
+                    break;
+                };
+
+                channel.has_switched.notified().await;
+            }
+        });
+    }
 }
 
 struct TimeKeeper {
-    last_known_time: f64,
-    total_time: f64,
-    currently_playing: bool,
-    last_update: SystemTime,
+    last_known_time: Mutex<f64>,
+    total_time: Mutex<f64>,
+    currently_playing: AtomicBool,
+    last_update: Mutex<SystemTime>,
+    was_updated: Notify,
 }
 
 impl TimeKeeper {
     fn new(total_time: f64) -> Self {
         Self {
-            last_known_time: 0.0,
-            total_time,
-            currently_playing: true,
-            last_update: SystemTime::now(),
+            last_known_time: 0.0.into(),
+            total_time: total_time.into(),
+            currently_playing: true.into(),
+            last_update: SystemTime::now().into(),
+            was_updated: Notify::new(),
         }
     }
 
-    fn update(&mut self, time: f64, state: SessionState) {
-        self.currently_playing = match state {
-            SessionState::Paused => false,
-            SessionState::Playing => true,
-        };
-        self.last_known_time = time;
-        self.last_update = SystemTime::now();
+    async fn reset(&self, total_time: f64) {
+        *self.last_known_time.lock().await = 0.;
+        *self.total_time.lock().await = total_time;
+        self.currently_playing.store(true, Ordering::Relaxed);
+        *self.last_update.lock().await = SystemTime::now();
+        self.was_updated.notify_one();
     }
 
-    fn current_estimate(&self) -> f64 {
-        if self.currently_playing {
-            SystemTime::now()
-                .duration_since(self.last_update)
-                .log_warn_with_msg("Failed to estimate current video progress of session")
-                .unwrap_or_default()
-                .as_secs_f64()
+    async fn update(&self, time: f64, state: SessionState) {
+        self.currently_playing.store(
+            match state {
+                SessionState::Paused => false,
+                SessionState::Playing => true,
+            },
+            Ordering::Relaxed,
+        );
+        *self.last_known_time.lock().await = time;
+        *self.last_update.lock().await = SystemTime::now();
+        self.was_updated.notify_one();
+    }
+
+    pub async fn when_to_recommend(&self) -> f64 {
+        *self.total_time.lock().await * 0.95
+    }
+
+    async fn current_estimate(&self) -> f64 {
+        if self.currently_playing.load(Ordering::Relaxed) {
+            *self.last_known_time.lock().await
+                + SystemTime::now()
+                    .duration_since(*self.last_update.lock().await)
+                    .log_warn_with_msg("Failed to estimate current video progress of session")
+                    .unwrap_or_default()
+                    .as_secs_f64()
         } else {
-            self.last_known_time
+            *self.last_known_time.lock().await
         }
+    }
+
+    async fn recommend_now(timekeeper: Arc<Self>, shutdown: Shutdown) -> AppResult<()> {
+        const MAX_SLEEP: u64 = 68_719_450_000; // A Little under the maximum sleep time in the tokio docs
+        loop {
+            let duration = if timekeeper.currently_playing.load(Ordering::Relaxed) {
+                let sleep_time =
+                    timekeeper.when_to_recommend().await - timekeeper.current_estimate().await;
+                let sleep_time = sleep_time.clamp(0., MAX_SLEEP as f64);
+                Duration::from_secs_f64(sleep_time)
+            } else {
+                Duration::from_millis(MAX_SLEEP)
+            };
+
+            tokio::select! {
+                _ = shutdown.cancelled() => { return Err(AppError::Custom("Cancelled".to_owned())) }
+                _ = tokio::time::sleep(duration) => { break }
+                _ = timekeeper.was_updated.notified() => {}
+            }
+        }
+        Ok(())
     }
 }
 
