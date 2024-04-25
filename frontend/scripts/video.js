@@ -317,9 +317,10 @@ function reload() {
     video.pause();
     video.currentTime = 0;
 
-    tmp = video.src;
-    video.src = "";
-    video.src = tmp;
+    let src = video.src;
+    let numbers = src.match(/\d+$/);
+    let invalidation_num = parseInt(numbers[0], 10);
+    video.src = src.replace(/\d+$/, invalidation_num + 1);
 
     let popup = document.querySelector(".popup");
     popup.parentNode.removeChild(popup);// TODO: Make this failing not matter
