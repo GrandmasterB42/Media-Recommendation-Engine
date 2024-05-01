@@ -25,7 +25,7 @@ document.body.addEventListener("htmx:wsError", (event) => {
 let active = false;
 async function wait_for_interact() {
     while (!navigator.userActivation.isActive) {
-        await new Promise(r => setTimeout(r, 100));
+        await new Promise(r => setTimeout(r, 10));
     }
     active = true;
     let message = {
@@ -302,6 +302,20 @@ document.addEventListener("keydown", e => {
             break;
     }
 })
+
+video.addEventListener('play', () => {
+    if (videocontainer.classList.contains("pip")) {
+        videocontainer.classList.remove("paused");
+        sendVideoUpdate("Play");
+    }
+});
+
+video.addEventListener('pause', () => {
+    if (videocontainer.classList.contains("pip")) {
+        videocontainer.classList.add("paused");
+        sendVideoUpdate("Pause");
+    }
+});
 
 // function for popup redirect
 function confirmpopup(id) {

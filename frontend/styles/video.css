@@ -8,7 +8,7 @@ body {
     display: flex;
     justify-content: center;
     margin-inline: auto;
-    background-color: var(--background-color);
+    background-color: black;
     transition: cursor 150ms ease-in-out;
 }
 
