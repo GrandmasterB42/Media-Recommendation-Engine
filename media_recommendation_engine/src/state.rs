@@ -1,6 +1,7 @@
 use std::{
     error::Error,
     fmt::Display,
+    ops::Deref,
     sync::{Arc, Mutex},
 };
 
@@ -9,7 +10,7 @@ use axum::{
     http::{self, StatusCode},
     response::IntoResponse,
 };
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, Notify};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -23,24 +24,34 @@ pub struct AppState {
     streaming_sessions: StreamingSessions,
     shutdown: Shutdown,
     serversettings: ServerSettings,
+    indexing_trigger: IndexingTrigger,
 }
 
 impl AppState {
     pub async fn new(
         database: Database,
-    ) -> (Self, Shutdown, ServerSettings, oneshot::Receiver<bool>) {
+    ) -> (
+        Self,
+        Shutdown,
+        ServerSettings,
+        IndexingTrigger,
+        oneshot::Receiver<bool>,
+    ) {
         let (shutdown, restart_receiver) = Shutdown::new();
         let streaming_sessions = StreamingSessions::new(shutdown.clone());
         let serversettings = ServerSettings::new(shutdown.clone(), database.clone()).await;
+        let indexing_trigger = IndexingTrigger(Arc::new(Notify::new()));
         (
             Self {
                 database,
                 streaming_sessions,
                 shutdown: shutdown.clone(),
                 serversettings: serversettings.clone(),
+                indexing_trigger: indexing_trigger.clone(),
             },
             shutdown,
             serversettings,
+            indexing_trigger,
             restart_receiver,
         )
     }
@@ -67,6 +78,23 @@ impl FromRef<AppState> for Shutdown {
 impl FromRef<AppState> for ServerSettings {
     fn from_ref(state: &AppState) -> ServerSettings {
         state.serversettings.clone()
+    }
+}
+
+impl FromRef<AppState> for IndexingTrigger {
+    fn from_ref(state: &AppState) -> IndexingTrigger {
+        state.indexing_trigger.clone()
+    }
+}
+
+#[derive(Clone)]
+pub struct IndexingTrigger(Arc<Notify>);
+
+impl Deref for IndexingTrigger {
+    type Target = Notify;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 

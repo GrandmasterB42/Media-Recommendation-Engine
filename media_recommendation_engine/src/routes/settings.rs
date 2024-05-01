@@ -1,6 +1,3 @@
-use std::fmt::Display;
-
-use askama::Template;
 use askama_axum::IntoResponse;
 use axum::{
     extract::{Path, State},
@@ -8,16 +5,19 @@ use axum::{
     routing::{delete, get, patch, post},
     Form, Router,
 };
+
 use rusqlite::params;
 use serde::Deserialize;
 
 use crate::{
     database::{Database, QueryRowGetConnExt, QueryRowIntoStmtExt},
-    state::{AppError, AppResult, AppState, Shutdown},
+    state::{AppError, AppResult, AppState, IndexingTrigger, Shutdown},
     utils::{
         frontend_redirect,
-        templates::{AsDisplay, Creation, CreationInput, Setting, Settings, SwapIn, UserEntry},
-        AuthExt, AuthSession, ConvertErr, HXTarget, HandleErr, ServerSettings,
+        templates::{
+            AsDisplay, Creation, CreationInput, LocationEntry, Setting, Settings, SwapIn, UserEntry,
+        },
+        AuthExt, AuthSession, HXTarget, HandleErr, ServerSettings,
     },
 };
 
@@ -30,29 +30,28 @@ pub fn settings() -> Router<AppState> {
         .route("/password", patch(password))
         .route("/user", post(add_user))
         .route("/user/:id", delete(remove_user))
+        .route("/location", post(add_location))
+        .route("/location/:id", delete(remove_location))
 }
 
 async fn settings_page(
     auth: AuthSession,
     State(db): State<Database>,
-) -> Result<impl IntoResponse, impl IntoResponse> {
+) -> AppResult<impl IntoResponse> {
     let admin_settings = if auth.has_perm("owner").await? {
-        let user_creation = user_creation(&auth, &db).await?;
-        Some(vec![user_creation])
+        Some(vec![location_addition(&db)?, user_creation(&db)?])
     } else {
         None
     };
 
     let name = auth.user.unwrap().username; // This route has logged in as a wrapper
 
-    Settings {
+    Ok(Settings {
         admin_settings,
         account_settings: vec![],
         redirect_back: frontend_redirect("/", HXTarget::All),
         name,
-    }
-    .render()
-    .convert_err::<AppError>()
+    })
 }
 
 // Turning these two function below into one with a const generic didn't seem to work properly. But this does, so I don't care
@@ -90,21 +89,19 @@ async fn username(
     State(db): State<Database>,
     State(settings): State<ServerSettings>,
     new_name: Form<ChangeUsername>,
-) -> Result<impl IntoResponse, impl IntoResponse> {
+) -> AppResult<impl IntoResponse> {
     let Some(user) = auth.user else {
-        return Err(StatusCode::UNAUTHORIZED);
+        return Err(AppError::Status(StatusCode::UNAUTHORIZED));
     };
 
-    let conn = db.get().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = db.get()?;
 
     let new_name = &new_name.name;
 
-    let user_exists = conn
-        .query_row_get::<bool>(
-            "SELECT exists(SELECT 1 FROM users WHERE username = ?1)",
-            [new_name],
-        )
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let user_exists = conn.query_row_get::<bool>(
+        "SELECT exists(SELECT 1 FROM users WHERE username = ?1)",
+        [new_name],
+    )?;
 
     if user_exists {
         return Ok((
@@ -124,8 +121,7 @@ async fn username(
         conn.execute(
             "UPDATE users SET username = ?1 WHERE username = ?2",
             [new_name, &user.username],
-        )
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        )?;
     }
 
     Ok(new_name.clone().into_response())
@@ -141,12 +137,12 @@ async fn password(
     State(db): State<Database>,
     State(settings): State<ServerSettings>,
     new_password: Form<ChangePassword>,
-) -> Result<impl IntoResponse, impl IntoResponse> {
+) -> AppResult<impl IntoResponse> {
     let Some(user) = auth.user else {
-        return Err(StatusCode::UNAUTHORIZED);
+        return Err(AppError::Status(StatusCode::UNAUTHORIZED));
     };
 
-    let conn = db.get().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = db.get()?;
 
     let new_password = new_password.password.clone();
 
@@ -156,12 +152,11 @@ async fn password(
         let new_pw =
             tokio::task::spawn_blocking(move || password_auth::generate_hash(new_password))
                 .await
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                .map_err(|_| AppError::Status(StatusCode::INTERNAL_SERVER_ERROR))?;
         conn.execute(
             "UPDATE users SET password = ?1 WHERE username = ?2",
             [new_pw, user.username],
-        )
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        )?;
     }
 
     Ok(StatusCode::OK)
@@ -253,18 +248,13 @@ async fn remove_user(
     Ok(())
 }
 
-async fn user_creation(auth: &AuthSession, db: &Database) -> AppResult<Setting> {
-    if !auth.has_perm("owner").await.unwrap_or_default() {
-        return Err(AppError::Status(StatusCode::UNAUTHORIZED));
-    }
-
+fn user_creation(db: &Database) -> AppResult<Setting> {
     let conn = db.get()?;
 
     let owner_perm_id =
         conn.query_row_get::<u64>("SELECT id FROM permissions WHERE name = ?1", ["owner"])?;
 
-    let mut db_user = conn.prepare("SELECT id, username FROM users")?;
-    let users = db_user
+    let users = conn.prepare("SELECT id, username FROM users")?
         .query_map_into::<(u64, String)>([])?
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()
@@ -299,4 +289,115 @@ async fn user_creation(auth: &AuthSession, db: &Database) -> AppResult<Setting> 
             ],
         },
     })
+}
+
+fn location_addition(db: &Database) -> AppResult<Setting> {
+    let conn = db.get()?;
+
+    let locations = conn
+        .prepare("SELECT id, path FROM storage_locations")?
+        .query_map_into::<(u64, String)>([])?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(|(id, path)| {
+            LocationEntry {
+                location_id: id,
+                path,
+            }
+            .to_box()
+        })
+        .collect::<Vec<_>>();
+
+    Ok(Setting::CreationMenu {
+        creation: Creation {
+            title: "Storage Locations",
+            list_id: "location_list",
+            error_id: "location_error",
+            post_addr: "/settings/location",
+            entries: locations,
+            inputs: vec![CreationInput {
+                typ: "text",
+                name: "path",
+                placeholder: "Path",
+            }],
+        },
+    })
+}
+
+#[derive(Deserialize)]
+struct AddLocation {
+    path: String,
+}
+
+async fn add_location(
+    auth: AuthSession,
+    State(db): State<Database>,
+    State(trigger): State<IndexingTrigger>,
+    Form(location): Form<AddLocation>,
+) -> AppResult<impl IntoResponse> {
+    if !auth.has_perm("owner").await.unwrap_or_default() {
+        return Err(AppError::Status(StatusCode::UNAUTHORIZED));
+    }
+
+    let conn = db.get()?;
+
+    if !std::path::Path::new(&location.path).exists() {
+        return Ok((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            SwapIn {
+                swap_id: "location_error",
+                swap_method: None,
+                content: format!("Could not access the location: \"{}\"", location.path),
+            },
+        )
+            .into_response());
+    }
+
+    let id = conn.query_row_get::<u64>(
+        "INSERT INTO storage_locations (path) VALUES (?1) RETURNING id",
+        params![location.path],
+    )?;
+
+    trigger.notify_one();
+
+    Ok(SwapIn {
+        swap_id: "location_list",
+        swap_method: Some("beforeend"),
+        content: LocationEntry {
+            location_id: id,
+            path: location.path,
+        },
+    }
+    .into_response())
+}
+
+async fn remove_location(
+    auth: AuthSession,
+    State(db): State<Database>,
+    State(trigger): State<IndexingTrigger>,
+    Path(id): Path<u64>,
+) -> AppResult<impl IntoResponse> {
+    if !auth.has_perm("owner").await? {
+        return Err(AppError::Status(StatusCode::UNAUTHORIZED));
+    }
+
+    let deletion_amount = db
+        .get()?
+        .execute("DELETE FROM storage_locations WHERE id = ?1", [id])?;
+
+    if deletion_amount == 0 {
+        return Ok((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            SwapIn {
+                swap_id: "location_error",
+                swap_method: None,
+                content: "Failed to delete requested storage location".to_owned(),
+            },
+        )
+            .into_response());
+    }
+
+    trigger.notify_one();
+
+    Ok(().into_response())
 }

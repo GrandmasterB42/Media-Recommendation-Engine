@@ -87,6 +87,19 @@ impl AsDisplay for UserEntry {
 }
 
 #[derive(Template)]
+#[template(path = "../frontend/content/settings/location_entry.html")]
+pub struct LocationEntry {
+    pub location_id: u64,
+    pub path: String,
+}
+
+impl AsDisplay for LocationEntry {
+    fn to_box(self) -> Box<dyn Display> {
+        Box::new(self)
+    }
+}
+
+#[derive(Template)]
 #[template(path = "../frontend/content/library.html")]
 pub struct Library {
     pub franchises: Vec<GridElement>,

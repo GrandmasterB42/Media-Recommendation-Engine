@@ -79,7 +79,6 @@ fn db_init(conn: &rusqlite::Connection) -> AppResult<()> {
 
     /*
     TODO
-    - Make the storage_locations entry not hardcoded
     - Consider adding a hash and last_modified column to data_files for tracking what needs to be recomputed/reevaluated
         -> Same hash somewhere new -> reassign playback thumbnails for example
         -> Different hash but location the same -> just recompute stuff related to the file without changing/removing references to it

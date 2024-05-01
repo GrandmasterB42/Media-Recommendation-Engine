@@ -82,7 +82,7 @@ async fn server() -> bool {
 
     let auth = AuthManagerLayerBuilder::new(session_store, session_layer).build();
 
-    let (state, shutdown, settings, restart) = AppState::new(db.clone()).await;
+    let (state, shutdown, settings, indexing_trigger, restart) = AppState::new(db.clone()).await;
 
     let app = Router::new()
         .merge(tracing_layer())
@@ -109,7 +109,12 @@ async fn server() -> bool {
 
     info!("Starting server on {ip}");
 
-    tokio::spawn(periodic_indexing(db, settings, shutdown.clone()));
+    tokio::spawn(periodic_indexing(
+        db,
+        settings,
+        indexing_trigger,
+        shutdown.clone(),
+    ));
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal(shutdown))

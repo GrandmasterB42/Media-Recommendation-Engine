@@ -9,11 +9,16 @@ use tracing::{debug, info, warn};
 
 use crate::{
     database::{Database, QueryRowGetConnExt, QueryRowGetStmtExt, QueryRowIntoConnExt},
-    state::{AppResult, Shutdown},
+    state::{AppResult, IndexingTrigger, Shutdown},
     utils::{HandleErr, Ignore, ParseBetween, ParseUntil, ServerSettings},
 };
 
-pub async fn periodic_indexing(db: Database, settings: ServerSettings, shutdown: Shutdown) {
+pub async fn periodic_indexing(
+    db: Database,
+    settings: ServerSettings,
+    trigger: IndexingTrigger,
+    shutdown: Shutdown,
+) {
     loop {
         let conn = db
             .get()
@@ -25,6 +30,9 @@ pub async fn periodic_indexing(db: Database, settings: ServerSettings, shutdown:
 
         tokio::select! {
             _ = settings.wait_configured_time() => {}
+            _ = trigger.notified() => {
+                debug!("Started indexing because it was requested");
+            }
             _ = shutdown.cancelled() => return
         }
     }

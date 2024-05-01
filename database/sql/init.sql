@@ -46,9 +46,10 @@ CREATE TABLE group_permissions (
 );
 
 -- # Media
-CREATE TABLE storage_locations (path);
-
-INSERT INTO storage_locations VALUES ('Y:');
+CREATE TABLE storage_locations (
+    id INTEGER PRIMARY KEY,
+    path TEXT NOT NULL
+);
 
 CREATE TABLE data_files (
     id INTEGER PRIMARY KEY,

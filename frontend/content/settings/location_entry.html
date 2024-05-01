@@ -1,0 +1,7 @@
+<div id="location_{{location_id}}" class="user_entry">
+    {{ path }}
+    <button type="button" hx-delete="/settings/location/{{location_id}}" hx-target="#location_{{location_id}}"
+        hx-swap="outerHTML" hx-confirm="Do you really want to delete this storage lcoation?">
+        <img src="/icons/delete.svg" />
+    </button>
+</div>
