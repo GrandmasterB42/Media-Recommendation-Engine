@@ -161,8 +161,7 @@ button[type="submit"]:hover {
     cursor: pointer;
 }
 
-#error,
-#creation_error {
+.error {
     background-color: var(--warning_color);
     border-radius: 3px;
     margin-top: 5px;
@@ -171,24 +170,23 @@ button[type="submit"]:hover {
     text-align: center;
 }
 
-#error:empty,
-#creation_error:empty {
+.error:empty {
     display: none;
 }
 
-.user_wrapper {
+.creation_menu {
     background-color: var(--foreground_color);
     border-radius: 5px;
     width: 100%;
     margin-bottom: 5px;
 }
 
-.user_wrapper>h3 {
+.creation_menu>h3 {
     line-height: 0px;
     padding-left: 5px;
 }
 
-#user_form {
+.creation_form {
     display: flex;
     justify-content: center;
     align-items: center;
@@ -206,7 +204,7 @@ button[type="submit"]:hover {
     background-color: var(--highlighted_green);
 }
 
-#user_list {
+.list {
     border: solid;
     border-color: var(--highlight_color);
     border-radius: 4px;

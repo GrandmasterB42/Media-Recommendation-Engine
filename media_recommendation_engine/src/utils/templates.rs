@@ -2,6 +2,10 @@ use std::fmt::Display;
 
 use askama::Template;
 
+pub trait AsDisplay: Display {
+    fn to_box(self) -> Box<dyn Display>;
+}
+
 #[derive(Template)]
 #[template(path = "../frontend/content/index.html")]
 pub struct Index {
@@ -36,31 +40,36 @@ pub struct Error<'a> {
 
 #[derive(Template)]
 #[template(path = "../frontend/content/settings/settings.html")]
-pub struct Settings<'a> {
-    pub admin_settings: Option<Vec<Setting<'a>>>,
-    pub account_settings: Vec<Setting<'a>>,
+pub struct Settings {
+    pub admin_settings: Option<Vec<Setting>>,
+    pub account_settings: Vec<Setting>,
     pub redirect_back: String,
     pub name: String,
 }
 
 #[derive(Template)]
 #[template(path = "../frontend/content/settings/setting.html")]
-pub enum Setting<'a> {
-    TextSetting {
-        prompt: &'a str,
-        action: &'a str,
-    },
-    Button {
-        label: &'a str,
-        class: &'a str,
-        action: &'a str,
-    },
+pub enum Setting {
+    CreationMenu { creation: Creation },
 }
 
 #[derive(Template)]
-#[template(path = "../frontend/content/settings/user_creation.html")]
-pub struct UserCreation {
-    pub users: Vec<UserEntry>,
+#[template(path = "../frontend/content/settings/creation.html")]
+pub struct Creation {
+    pub title: &'static str,
+    pub list_id: &'static str,
+    pub error_id: &'static str,
+    pub post_addr: &'static str,
+    pub entries: Vec<Box<dyn Display>>,
+    pub inputs: Vec<CreationInput>,
+}
+
+#[derive(Template)]
+#[template(path = "../frontend/content/settings/creation_input.html")]
+pub struct CreationInput {
+    pub typ: &'static str,
+    pub name: &'static str,
+    pub placeholder: &'static str,
 }
 
 #[derive(Template)]
@@ -69,6 +78,12 @@ pub struct UserEntry {
     pub user_id: u64,
     pub name: String,
     pub can_delete: bool,
+}
+
+impl AsDisplay for UserEntry {
+    fn to_box(self) -> Box<dyn Display> {
+        Box::new(self)
+    }
 }
 
 #[derive(Template)]

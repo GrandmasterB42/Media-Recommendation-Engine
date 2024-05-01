@@ -4,7 +4,11 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use axum::{extract::FromRef, http, response::IntoResponse};
+use axum::{
+    extract::FromRef,
+    http::{self, StatusCode},
+    response::IntoResponse,
+};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
@@ -121,6 +125,7 @@ pub enum AppError {
     Templating(askama::Error),
     #[allow(non_camel_case_types)]
     ffmpeg(ffmpeg::Error),
+    Status(StatusCode),
     Custom(String),
 }
 
@@ -131,6 +136,7 @@ impl Display for AppError {
             AppError::Pool(e) => write!(f, "Pool Error: {e}"),
             AppError::Templating(e) => write!(f, "Templating Error: {e}"),
             AppError::ffmpeg(e) => write!(f, "ffmpeg Error: {e}"),
+            AppError::Status(e) => write!(f, "{e}"),
             AppError::Custom(e) => write!(f, "Custom Error: {e}"),
         }
     }

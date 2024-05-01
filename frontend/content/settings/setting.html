@@ -1,11 +1,7 @@
 {% match self %}
 
-{% when Setting::TextSetting with { prompt, action } %}
+{% when Setting::CreationMenu with { creation } %}
 
-<p> {{ prompt }} {{ action }} </p>
-
-{% when Setting::Button with { label, class, action } %}
-
-<p> {{ label }} {{ class }} {{ action }} </p>
+{{ creation|safe }}
 
 {% endmatch %}

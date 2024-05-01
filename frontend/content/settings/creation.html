@@ -1,0 +1,30 @@
+<div class="creation_menu">
+    <script>
+        function clearForm() {
+            var frm = document.getElementById("{{title}}_form");
+            frm.reset();
+        }
+    </script>
+
+    <h3> {{title}} </h3>
+
+    <div id={{list_id}} class="list">
+        {% for entry in entries %}
+        {{ entry|safe }}
+        {% endfor %}
+    </div>
+
+    <div class="creation_wrapper">
+        <form id="{{title}}_form" class="creation_form" hx-post={{post_addr}} hx-target="#{{list_id}}" hx-swap="none"
+            hx-on::after-request="clearForm()" autocomplete="off">
+            {% for input in inputs %}
+            {{ input|safe }}
+            {% endfor %}
+            <div class="creation_input">
+                <button type="submit"> + </button>
+            </div>
+        </form>
+
+        <div id={{error_id}} class="error"></div>
+    </div>
+</div>

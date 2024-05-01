@@ -1,3 +1,6 @@
+use std::fmt::Display;
+
+use askama::Template;
 use askama_axum::IntoResponse;
 use axum::{
     extract::{Path, State},
@@ -13,8 +16,8 @@ use crate::{
     state::{AppError, AppResult, AppState, Shutdown},
     utils::{
         frontend_redirect,
-        templates::{Setting, Settings, SwapIn, UserCreation, UserEntry},
-        AuthExt, AuthSession, HXTarget, HandleErr, ServerSettings,
+        templates::{AsDisplay, Creation, CreationInput, Setting, Settings, SwapIn, UserEntry},
+        AuthExt, AuthSession, ConvertErr, HXTarget, HandleErr, ServerSettings,
     },
 };
 
@@ -25,35 +28,31 @@ pub fn settings() -> Router<AppState> {
         .route("/restart", post(restart))
         .route("/username", patch(username))
         .route("/password", patch(password))
-        .route("/users", get(user_creation))
         .route("/user", post(add_user))
         .route("/user/:id", delete(remove_user))
 }
 
-async fn settings_page(auth: AuthSession) -> AppResult<impl IntoResponse> {
-    let text_setting = Setting::TextSetting {
-        prompt: "This is a text prompt",
-        action: "This is done when ",
+async fn settings_page(
+    auth: AuthSession,
+    State(db): State<Database>,
+) -> Result<impl IntoResponse, impl IntoResponse> {
+    let admin_settings = if auth.has_perm("owner").await? {
+        let user_creation = user_creation(&auth, &db).await?;
+        Some(vec![user_creation])
+    } else {
+        None
     };
-    let button_setting = Setting::Button {
-        label: "This is a button label",
-        class: "cool styling for the button",
-        action: "a button action",
-    };
-
-    let mut admin_settings = None;
-    if auth.has_perm("owner").await? {
-        admin_settings = Some(vec![]);
-    }
 
     let name = auth.user.unwrap().username; // This route has logged in as a wrapper
 
-    Ok(Settings {
+    Settings {
         admin_settings,
-        account_settings: vec![text_setting, button_setting],
+        account_settings: vec![],
         redirect_back: frontend_redirect("/", HXTarget::All),
         name,
-    })
+    }
+    .render()
+    .convert_err::<AppError>()
 }
 
 // Turning these two function below into one with a const generic didn't seem to work properly. But this does, so I don't care
@@ -111,7 +110,7 @@ async fn username(
         return Ok((
             StatusCode::UNPROCESSABLE_ENTITY,
             SwapIn {
-                swap_id: "error",
+                swap_id: "user_error",
                 swap_method: None,
                 content: "That Username is not available!",
             },
@@ -168,44 +167,6 @@ async fn password(
     Ok(StatusCode::OK)
 }
 
-async fn user_creation(
-    auth: AuthSession,
-    State(db): State<Database>,
-) -> Result<impl IntoResponse, impl IntoResponse> {
-    if !auth.has_perm("owner").await.unwrap_or_default() {
-        return Err(StatusCode::UNAUTHORIZED.into_response());
-    }
-
-    let conn = db
-        .get()
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())?;
-
-    let owner_perm_id = conn
-        .query_row_get::<u64>("SELECT id FROM permissions WHERE name = ?1", ["owner"])
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())?;
-
-    let mut db_user = conn
-        .prepare("SELECT id, username FROM users")
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())?;
-    let users = db_user
-        .query_map_into::<(u64, String)>([])
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())?
-        .into_iter()
-        .map(|(id, name)| {
-            let is_admin = conn.query_row_get::<bool>(
-                "SELECT exists(SELECT 1 FROM user_permissions WHERE userid = ?1 AND permissionid = ?2)",
-                params![id, owner_perm_id],
-                ).unwrap_or_default();
-
-            UserEntry { user_id: id, name, can_delete: !is_admin }
-        })
-        .collect::<Vec<_>>();
-
-    Ok(UserCreation { users })
-}
-
 #[derive(Deserialize)]
 struct NewUser {
     username: String,
@@ -216,27 +177,23 @@ async fn add_user(
     auth: AuthSession,
     State(db): State<Database>,
     Form(new_user): Form<NewUser>,
-) -> Result<impl IntoResponse, impl IntoResponse> {
+) -> AppResult<impl IntoResponse> {
     if !auth.has_perm("owner").await.unwrap_or_default() {
-        return Err(StatusCode::UNAUTHORIZED.into_response());
+        return Err(AppError::Status(StatusCode::UNAUTHORIZED));
     }
 
-    let conn = db
-        .get()
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())?;
+    let conn = db.get()?;
 
-    let user_exists = conn
-        .query_row_get::<bool>(
-            "SELECT exists(SELECT 1 FROM users WHERE username = ?1)",
-            [&new_user.username],
-        )
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())?;
+    let user_exists = conn.query_row_get::<bool>(
+        "SELECT exists(SELECT 1 FROM users WHERE username = ?1)",
+        [&new_user.username],
+    )?;
 
     if user_exists {
         return Ok((
             StatusCode::UNPROCESSABLE_ENTITY,
             SwapIn {
-                swap_id: "creation_error",
+                swap_id: "user_error",
                 swap_method: None,
                 content: "That Username is not available!",
             },
@@ -249,12 +206,10 @@ async fn add_user(
         .log_err_with_msg("Failed to generate password hash")
         .unwrap_or_default();
 
-    let id = conn
-        .query_row_get::<u64>(
-            "INSERT INTO users (username, password) VALUES (?1, ?2) RETURNING id",
-            params![new_user.username, password],
-        )
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())?;
+    let id = conn.query_row_get::<u64>(
+        "INSERT INTO users (username, password) VALUES (?1, ?2) RETURNING id",
+        params![new_user.username, password],
+    )?;
 
     Ok(SwapIn {
         swap_id: "user_list",
@@ -296,4 +251,52 @@ async fn remove_user(
     conn.execute("DELETE FROM user_groups WHERE userid = ?1", [user_id])?;
 
     Ok(())
+}
+
+async fn user_creation(auth: &AuthSession, db: &Database) -> AppResult<Setting> {
+    if !auth.has_perm("owner").await.unwrap_or_default() {
+        return Err(AppError::Status(StatusCode::UNAUTHORIZED));
+    }
+
+    let conn = db.get()?;
+
+    let owner_perm_id =
+        conn.query_row_get::<u64>("SELECT id FROM permissions WHERE name = ?1", ["owner"])?;
+
+    let mut db_user = conn.prepare("SELECT id, username FROM users")?;
+    let users = db_user
+        .query_map_into::<(u64, String)>([])?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(|(id, name)| {
+            let is_admin = conn.query_row_get::<bool>(
+                "SELECT exists(SELECT 1 FROM user_permissions WHERE userid = ?1 AND permissionid = ?2)",
+                params![id, owner_perm_id],
+                ).unwrap_or_default();
+
+            UserEntry { user_id: id, name, can_delete: !is_admin }.to_box()
+        })
+        .collect::<Vec<_>>();
+
+    Ok(Setting::CreationMenu {
+        creation: Creation {
+            title: "Users",
+            list_id: "user_list",
+            error_id: "user_error",
+            post_addr: "/settings/user",
+            entries: users,
+            inputs: vec![
+                CreationInput {
+                    typ: "text",
+                    name: "username",
+                    placeholder: "Username",
+                },
+                CreationInput {
+                    typ: "password",
+                    name: "password",
+                    placeholder: "Password",
+                },
+            ],
+        },
+    })
 }
