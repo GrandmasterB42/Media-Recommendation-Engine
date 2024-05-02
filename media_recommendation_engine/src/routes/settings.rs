@@ -32,6 +32,7 @@ pub fn settings() -> Router<AppState> {
         .route("/user/:id", delete(remove_user))
         .route("/location", post(add_location))
         .route("/location/:id", delete(remove_location))
+        .route("/location/recurse/:id", patch(recurse_location))
 }
 
 async fn settings_page(
@@ -276,12 +277,12 @@ fn user_creation(db: &Database) -> AppResult<Setting> {
             post_addr: "/settings/user",
             entries: users,
             inputs: vec![
-                CreationInput {
+                CreationInput::Text {
                     typ: "text",
                     name: "username",
                     placeholder: "Username",
                 },
-                CreationInput {
+                CreationInput::Text {
                     typ: "password",
                     name: "password",
                     placeholder: "Password",
@@ -295,12 +296,13 @@ fn location_addition(db: &Database) -> AppResult<Setting> {
     let conn = db.get()?;
 
     let locations = conn
-        .prepare("SELECT id, path FROM storage_locations")?
-        .query_map_into::<(u64, String)>([])?
+        .prepare("SELECT id, path, recurse FROM storage_locations")?
+        .query_map_into::<(u64, String, bool)>([])?
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()
-        .map(|(id, path)| {
+        .map(|(id, path, recurse)| {
             LocationEntry {
+                checked: recurse,
                 location_id: id,
                 path,
             }
@@ -315,11 +317,18 @@ fn location_addition(db: &Database) -> AppResult<Setting> {
             error_id: "location_error",
             post_addr: "/settings/location",
             entries: locations,
-            inputs: vec![CreationInput {
-                typ: "text",
-                name: "path",
-                placeholder: "Path",
-            }],
+            inputs: vec![
+                CreationInput::Text {
+                    typ: "text",
+                    name: "path",
+                    placeholder: "Path",
+                },
+                CreationInput::Checkbox {
+                    label: "Recurse",
+                    name: "recurse",
+                    value: "true",
+                },
+            ],
         },
     })
 }
@@ -327,6 +336,7 @@ fn location_addition(db: &Database) -> AppResult<Setting> {
 #[derive(Deserialize)]
 struct AddLocation {
     path: String,
+    recurse: Option<bool>,
 }
 
 async fn add_location(
@@ -353,9 +363,28 @@ async fn add_location(
             .into_response());
     }
 
+    let already_exists = conn.query_row_get::<bool>(
+        "SELECT exists(SELECT 1 FROM storage_locations WHERE path = ?1)",
+        [&location.path],
+    )?;
+
+    if already_exists {
+        return Ok((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            SwapIn {
+                swap_id: "location_error",
+                swap_method: None,
+                content: format!("The location \"{}\" already exists", location.path),
+            },
+        )
+            .into_response());
+    }
+
+    let recurse = location.recurse.unwrap_or_default();
+
     let id = conn.query_row_get::<u64>(
-        "INSERT INTO storage_locations (path) VALUES (?1) RETURNING id",
-        params![location.path],
+        "INSERT INTO storage_locations (path, recurse) VALUES (?1, ?2) RETURNING id",
+        params![&location.path, recurse],
     )?;
 
     trigger.notify_one();
@@ -364,6 +393,7 @@ async fn add_location(
         swap_id: "location_list",
         swap_method: Some("beforeend"),
         content: LocationEntry {
+            checked: recurse,
             location_id: id,
             path: location.path,
         },
@@ -392,6 +422,48 @@ async fn remove_location(
                 swap_id: "location_error",
                 swap_method: None,
                 content: "Failed to delete requested storage location".to_owned(),
+            },
+        )
+            .into_response());
+    }
+
+    trigger.notify_one();
+
+    Ok(().into_response())
+}
+
+#[derive(Deserialize)]
+struct RecurseLocation {
+    recurse: Option<bool>,
+}
+
+async fn recurse_location(
+    auth: AuthSession,
+    State(db): State<Database>,
+    State(trigger): State<IndexingTrigger>,
+    Path(id): Path<u64>,
+    Form(recurse): Form<RecurseLocation>,
+) -> AppResult<impl IntoResponse> {
+    if !auth.has_perm("owner").await? {
+        return Err(AppError::Status(StatusCode::UNAUTHORIZED));
+    }
+
+    let conn = db.get()?;
+
+    let recurse = recurse.recurse.unwrap_or_default();
+    let deletion_amount = conn.execute(
+        "UPDATE storage_locations SET recurse = ?1 WHERE id = ?2",
+        params![recurse, id],
+    )?;
+
+    if deletion_amount == 0 {
+        return Ok((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            SwapIn {
+                swap_id: "location_error",
+                swap_method: None,
+                content: "Failed to change whether the provided directory is recursed through"
+                    .to_owned(),
             },
         )
             .into_response());

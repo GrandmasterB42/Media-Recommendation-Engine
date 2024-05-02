@@ -1,11 +1,4 @@
 <div class="creation_menu">
-    <script>
-        function clearForm() {
-            var frm = document.getElementById("{{title}}_form");
-            frm.reset();
-        }
-    </script>
-
     <h3> {{title}} </h3>
 
     <div id={{list_id}} class="list">
@@ -15,8 +8,8 @@
     </div>
 
     <div class="creation_wrapper">
-        <form id="{{title}}_form" class="creation_form" hx-post={{post_addr}} hx-target="#{{list_id}}" hx-swap="none"
-            hx-on::after-request="clearForm()" autocomplete="off">
+        <form id="{{list_id}}_form" class="creation_form" hx-post={{post_addr}} hx-target="#{{list_id}}" hx-swap="none"
+            hx-on::after-request="document.getElementById('{{list_id}}_form').reset()" autocomplete="off">
             {% for input in inputs %}
             {{ input|safe }}
             {% endfor %}

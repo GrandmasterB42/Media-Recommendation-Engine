@@ -1,3 +1,9 @@
 <div class="creation_input">
+    {% match self %}
+    {% when CreationInput::Text { typ, name, placeholder } %}
     <input type={{typ}} name={{name}} placeholder={{placeholder}} required>
+    {% when CreationInput::Checkbox { label, name, value } %}
+    <label for={{name}}>{{label}}</label>
+    <input type="checkbox" name={{name}} value={{value}}>
+    {% endmatch %}
 </div>

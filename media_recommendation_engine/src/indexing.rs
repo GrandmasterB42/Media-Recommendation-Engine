@@ -8,7 +8,9 @@ use rusqlite::{params, Connection, OptionalExtension};
 use tracing::{debug, info, warn};
 
 use crate::{
-    database::{Database, QueryRowGetConnExt, QueryRowGetStmtExt, QueryRowIntoConnExt},
+    database::{
+        Database, QueryRowGetConnExt, QueryRowGetStmtExt, QueryRowIntoConnExt, QueryRowIntoStmtExt,
+    },
     state::{AppResult, IndexingTrigger, Shutdown},
     utils::{HandleErr, Ignore, ParseBetween, ParseUntil, ServerSettings},
 };
@@ -39,15 +41,15 @@ pub async fn periodic_indexing(
 }
 
 fn indexing(conn: &rusqlite::Connection) -> AppResult<()> {
-    let locations: Vec<String> = conn
-        .prepare("SELECT path FROM storage_locations")?
-        .query_map_get([])?
+    let locations = conn
+        .prepare("SELECT path, recurse FROM storage_locations")?
+        .query_map_into::<(String, bool)>([])?
         .collect::<Result<Vec<_>, _>>()?;
 
     let filesystem = locations
         .into_iter()
-        .map(PathBuf::from)
-        .flat_map(|path: std::path::PathBuf| scan_dir(&path))
+        .map(|(path, recurse)| (PathBuf::from(path), recurse))
+        .flat_map(|(path, recurse)| scan_dir(&path, recurse))
         .collect::<Vec<_>>();
 
     let database_registered: Vec<PathBuf> = {
@@ -475,8 +477,7 @@ enum Classification<'a> {
     },
 }
 
-// TODO: Make recursive a setting maybe?
-fn scan_dir(path: &Path) -> Vec<PathBuf> {
+fn scan_dir(path: &Path, recurse: bool) -> Vec<PathBuf> {
     path.read_dir().map_or(Vec::new(), |read_dir| {
         let mut out = Vec::new();
 
@@ -485,9 +486,10 @@ fn scan_dir(path: &Path) -> Vec<PathBuf> {
                 entry.log_err_with_msg("Encountered IO Error while scanning directory")
             {
                 let path = entry.path();
-                if path.is_dir() {
-                    out.extend(scan_dir(&path));
-                } else {
+                let is_dir = path.is_dir();
+                if is_dir && recurse {
+                    out.extend(scan_dir(&path, true));
+                } else if !is_dir {
                     out.push(path);
                 }
             }

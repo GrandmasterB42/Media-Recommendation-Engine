@@ -48,7 +48,8 @@ CREATE TABLE group_permissions (
 -- # Media
 CREATE TABLE storage_locations (
     id INTEGER PRIMARY KEY,
-    path TEXT NOT NULL
+    path TEXT NOT NULL,
+    recurse BOOLEAN NOT NULL
 );
 
 CREATE TABLE data_files (

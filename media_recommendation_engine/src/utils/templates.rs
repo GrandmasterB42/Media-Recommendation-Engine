@@ -66,10 +66,17 @@ pub struct Creation {
 
 #[derive(Template)]
 #[template(path = "../frontend/content/settings/creation_input.html")]
-pub struct CreationInput {
-    pub typ: &'static str,
-    pub name: &'static str,
-    pub placeholder: &'static str,
+pub enum CreationInput {
+    Text {
+        typ: &'static str,
+        name: &'static str,
+        placeholder: &'static str,
+    },
+    Checkbox {
+        label: &'static str,
+        name: &'static str,
+        value: &'static str,
+    },
 }
 
 #[derive(Template)]
@@ -89,6 +96,7 @@ impl AsDisplay for UserEntry {
 #[derive(Template)]
 #[template(path = "../frontend/content/settings/location_entry.html")]
 pub struct LocationEntry {
+    pub checked: bool,
     pub location_id: u64,
     pub path: String,
 }

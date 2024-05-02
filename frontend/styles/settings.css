@@ -211,7 +211,7 @@ button[type="submit"]:hover {
     margin: 4px;
 }
 
-.user_entry {
+.entry {
     margin: 2px 6px;
     padding: 4px;
     display: flex;
@@ -223,15 +223,20 @@ button[type="submit"]:hover {
     border-width: 2px;
 }
 
-.user_entry>button {
+.entry>button {
     background-color: var(--warning_color);
     border: none;
     border-radius: 3px;
 }
 
-.user_entry>button:hover {
+.entry>button:hover {
     background-color: var(--highlight_red);
     cursor: pointer;
+}
+
+.location_recurse {
+    margin-left: auto;
+    padding-right: 15px;
 }
 
 .danger {

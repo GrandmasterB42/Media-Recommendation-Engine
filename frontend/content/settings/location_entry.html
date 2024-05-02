@@ -1,5 +1,10 @@
-<div id="location_{{location_id}}" class="user_entry">
+<div id="location_{{location_id}}" class="entry">
     {{ path }}
+    <div class="location_recurse">
+        <label for="recurse_{{location_id}}"> Recurse </label>
+        <input id="recurse_{{location_id}}" type="checkbox" name="recurse" value="true" hx-trigger="change"
+            hx-patch="/settings/location/recurse/{{location_id}}" {% if checked %}checked{% endif %} />
+    </div>
     <button type="button" hx-delete="/settings/location/{{location_id}}" hx-target="#location_{{location_id}}"
         hx-swap="outerHTML" hx-confirm="Do you really want to delete this storage lcoation?">
         <img src="/icons/delete.svg" />
