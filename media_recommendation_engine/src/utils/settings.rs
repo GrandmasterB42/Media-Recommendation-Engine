@@ -56,16 +56,28 @@ pub struct ServerSettings {
 impl ServerSettings {
     const PATH: &'static str = "mreconfig.toml";
 
-    pub async fn new(shutdown: Shutdown, db: Database) -> Self {
+    pub async fn new(shutdown: Shutdown, db: Database, port: Option<u16>) -> Self {
         let config = if let Some(config_file) = tokio::fs::read_to_string(Self::PATH)
             .await
             .log_warn_with_msg("Failed to create config file, trying to create a new one")
         {
-            toml::from_str(&config_file)
+            let mut config: ConfigFile = toml::from_str(&config_file)
                 .log_err_with_msg("Failed to parse config file, using the default config instead")
-                .unwrap_or_default()
+                .unwrap_or_default();
+
+            if let Some(port) = port {
+                config.port = port;
+                Self::write_config_file(&config).await;
+            }
+
+            config
         } else {
-            let default = ConfigFile::default();
+            let mut default = ConfigFile::default();
+
+            if let Some(port) = port {
+                default.port = port;
+            }
+
             Self::write_config_file(&default).await;
             default
         };

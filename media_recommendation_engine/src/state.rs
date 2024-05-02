@@ -30,6 +30,7 @@ pub struct AppState {
 impl AppState {
     pub async fn new(
         database: Database,
+        port: Option<u16>,
     ) -> (
         Self,
         Shutdown,
@@ -39,7 +40,7 @@ impl AppState {
     ) {
         let (shutdown, restart_receiver) = Shutdown::new();
         let streaming_sessions = StreamingSessions::new(shutdown.clone());
-        let serversettings = ServerSettings::new(shutdown.clone(), database.clone()).await;
+        let serversettings = ServerSettings::new(shutdown.clone(), database.clone(), port).await;
         let indexing_trigger = IndexingTrigger(Arc::new(Notify::new()));
         (
             Self {
