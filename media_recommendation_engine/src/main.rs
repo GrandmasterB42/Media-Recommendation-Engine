@@ -24,7 +24,7 @@ use crate::{
     indexing::periodic_indexing,
     routes::dynamic_content,
     state::AppState,
-    utils::{htmx, init_tracing, login_required, tracing_layer, HandleErr},
+    utils::{htmx, init_tracing, login_required, HandleErr, TraceLayerExt},
 };
 
 #[macro_use]
@@ -37,10 +37,10 @@ mod state;
 
 #[tokio::main]
 async fn main() {
-    init_tracing();
-    ffmpeg::init().expect("failed to initialize ffmpeg");
-
     let mut args = Args::parse();
+
+    init_tracing(args.logging);
+    ffmpeg::init().expect("failed to initialize ffmpeg");
 
     if let Err(err) = handle_data_delete(args.delete_data).await {
         error!("{err}");
@@ -48,7 +48,7 @@ async fn main() {
     }
 
     loop {
-        let should_restart = server(std::mem::take(&mut args.port)).await;
+        let should_restart = server(std::mem::take(&mut args.port), args.logging).await;
         if !should_restart {
             break;
         }
@@ -58,7 +58,7 @@ async fn main() {
     info!("Suceessfully shut down");
 }
 
-async fn server(port: Option<u16>) -> bool {
+async fn server(port: Option<u16>, logging: Logging) -> bool {
     let db = Database::new().expect("failed to connect to database");
 
     let session_store = db.clone();
@@ -80,7 +80,6 @@ async fn server(port: Option<u16>) -> bool {
         AppState::new(db.clone(), port).await;
 
     let app = Router::new()
-        .merge(tracing_layer())
         .route("/", get(routes::homepage))
         .merge(routes::library())
         .route("/explore", get(routes::explore))
@@ -92,6 +91,7 @@ async fn server(port: Option<u16>) -> bool {
         .nest("/auth", routes::login())
         .route("/error", get(routes::error))
         .fallback(Redirect::permanent("/error?err=404"))
+        .tracing_layer(logging)
         .with_state(state)
         .layer(auth);
 
@@ -187,7 +187,7 @@ async fn handle_data_delete(delete_data: Option<Vec<DeleteKind>>) -> AppResult<(
         conn.execute_batch(&sql_file)?;
     }
 
-    info!("Successfully deleted requesteddata");
+    info!("Successfully deleted requested data");
 
     Ok(())
 }
@@ -209,9 +209,14 @@ struct Args {
         num_args = 1..,
     )]
     delete_data: Option<Vec<DeleteKind>>,
+    /// Set the level that things are logged at
+    #[arg(short, long, value_enum)]
+    #[cfg_attr(debug_assertions, arg(default_value_t = Logging::Debug))]
+    #[cfg_attr(not(debug_assertions), arg(default_value_t = Logging::Info))]
+    logging: Logging,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, ValueEnum)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, ValueEnum)]
 enum DeleteKind {
     /// Deletes all data stored in the database
     All,
@@ -223,4 +228,16 @@ enum DeleteKind {
     Users,
     /// Deletes login and viewing sessions
     Sessions,
+}
+
+#[derive(Copy, Clone, Debug, ValueEnum)]
+enum Logging {
+    /// Disables all logging
+    None,
+    /// Logs everything that might be important to a regular user
+    Info,
+    /// Includes debug information while logging
+    Debug,
+    /// Logs everything, including request- and response-related information | Does not include tracing information
+    All,
 }

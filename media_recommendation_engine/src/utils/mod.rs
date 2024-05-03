@@ -7,7 +7,7 @@ mod parsing;
 pub use parsing::{ParseBetween, ParseUntil};
 
 mod tracing;
-pub use tracing::{init_tracing, tracing_layer};
+pub use tracing::{init_tracing, TraceLayerExt};
 
 mod frontend;
 pub use frontend::{frontend_redirect, frontend_redirect_explicit, htmx, HXTarget};

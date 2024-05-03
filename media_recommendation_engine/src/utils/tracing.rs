@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use axum::{extract::MatchedPath, http::Request, response::Response, Router};
+use axum::{http::Request, response::Response, Router};
 use tower_http::trace::TraceLayer;
 use tracing::{debug, debug_span, field, Level, Span};
 use tracing_subscriber::{
@@ -11,18 +11,14 @@ use tracing_subscriber::{
     Layer,
 };
 
-use crate::state::AppState;
+use crate::{state::AppState, Logging};
 
-pub fn init_tracing() {
-    let (levelfilter, level) = {
-        #[cfg(debug_assertions)]
-        {
-            (LevelFilter::DEBUG, Level::DEBUG)
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            (LevelFilter::INFO, Level::INFO)
-        }
+pub fn init_tracing(logging: Logging) {
+    let (levelfilter, level) = match logging {
+        Logging::None => (LevelFilter::OFF, Level::ERROR),
+        Logging::Info => (LevelFilter::INFO, Level::INFO),
+        Logging::Debug => (LevelFilter::DEBUG, Level::DEBUG),
+        Logging::All => (LevelFilter::DEBUG, Level::DEBUG),
     };
 
     let filter = tracing_subscriber::filter::Targets::new()
@@ -48,26 +44,31 @@ pub fn init_tracing() {
         .init();
 }
 
-pub fn tracing_layer() -> Router<AppState> {
-    Router::new().layer(
-        TraceLayer::new_for_http()
-            .make_span_with(|_request: &Request<_>| {
-                debug_span!("request", method = field::Empty, uri = field::Empty)
-            })
-            .on_request(|req: &Request<_>, span: &Span| {
-                let method = req.method();
-                let uri = req
-                    .extensions()
-                    .get::<MatchedPath>()
-                    .map(MatchedPath::as_str);
-                span.record("method", method.to_string());
-                span.record("uri", uri);
-                debug!("Received Request");
-            })
-            .on_response(|res: &Response<_>, latency: Duration, _span: &Span| {
-                let status = res.status();
-                debug!("Took {latency:?} to respond with status '{status}'");
-            }),
-    )
-    // TODO: Add other meaningful options here once necessary
+pub trait TraceLayerExt {
+    fn tracing_layer(self, logging: Logging) -> Self;
+}
+
+impl TraceLayerExt for Router<AppState> {
+    fn tracing_layer(self, logging: Logging) -> Self {
+        match logging {
+            Logging::None | Logging::Debug | Logging::Info => return self,
+            Logging::All => (),
+        }
+
+        self.layer(
+            TraceLayer::new_for_http()
+                .make_span_with(|_request: &Request<_>| {
+                    debug_span!("request", method = field::Empty, uri = field::Empty)
+                })
+                .on_request(|req: &Request<_>, span: &Span| {
+                    span.record("method", req.method().to_string());
+                    span.record("uri", req.uri().to_string());
+                    debug!("Received Request");
+                })
+                .on_response(|res: &Response<_>, latency: Duration, _span: &Span| {
+                    let status = res.status();
+                    debug!("Took {latency:?} to respond with status '{status}'");
+                }),
+        )
+    }
 }
