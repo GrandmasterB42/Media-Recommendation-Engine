@@ -1,0 +1,28 @@
+{
+    "name": "mre_extension",
+    "version": "0.1",
+    "description": "Chrome Extension for Media Recommendation Engine",
+    "permissions": [],
+    "content_scripts": [
+        {
+            "matches": [
+                "https://*/"
+            ],
+            "js": [
+                "mre_extension.js",
+                "run_wasm.js"
+            ]
+        }
+    ],
+    "web_accessible_resources": [
+        {
+            "resources": [
+                "mre_extension_bg.wasm"
+            ],
+            "matches": [
+                "<all_urls>"
+            ]
+        }
+    ],
+    "manifest_version": 3
+}
