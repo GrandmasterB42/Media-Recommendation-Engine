@@ -238,6 +238,8 @@ enum Logging {
     Info,
     /// Includes debug information while logging
     Debug,
-    /// Logs everything, including request- and response-related information | Does not include tracing information
+    /// Logs debug information and request- and response-related information
+    Requests,
+    /// Logs everything
     All,
 }

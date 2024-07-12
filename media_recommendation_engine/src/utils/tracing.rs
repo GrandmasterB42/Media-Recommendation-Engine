@@ -18,7 +18,8 @@ pub fn init_tracing(logging: Logging) {
         Logging::None => (LevelFilter::OFF, Level::ERROR),
         Logging::Info => (LevelFilter::INFO, Level::INFO),
         Logging::Debug => (LevelFilter::DEBUG, Level::DEBUG),
-        Logging::All => (LevelFilter::DEBUG, Level::DEBUG),
+        Logging::Requests => (LevelFilter::DEBUG, Level::DEBUG),
+        Logging::All => (LevelFilter::TRACE, Level::TRACE),
     };
 
     let filter = tracing_subscriber::filter::Targets::new()
@@ -52,7 +53,7 @@ impl TraceLayerExt for Router<AppState> {
     fn tracing_layer(self, logging: Logging) -> Self {
         match logging {
             Logging::None | Logging::Debug | Logging::Info => return self,
-            Logging::All => (),
+            Logging::Requests | Logging::All => (),
         }
 
         self.layer(
