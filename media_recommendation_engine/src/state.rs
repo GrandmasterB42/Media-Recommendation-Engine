@@ -216,7 +216,9 @@ impl IntoResponse for AppError {
         #[cfg(debug_assertions)]
         return (
             http::StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Error: {self:?}"),
+            DebugError {
+                err: &format!("{self:?}"),
+            },
         )
             .into_response();
     }

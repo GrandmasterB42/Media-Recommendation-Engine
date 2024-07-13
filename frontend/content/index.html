@@ -20,4 +20,8 @@
 <script src="/htmx_sse"> </script>
 <script src="/scripts/root.js"> </script>
 
+{% if cfg!(debug_assertions) %}
+<script src="/scripts/debug_swap.js"> </script>
+{% endif %}
+
 </html>

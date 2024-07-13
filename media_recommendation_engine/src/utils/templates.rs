@@ -39,6 +39,12 @@ pub struct Error<'a> {
 }
 
 #[derive(Template)]
+#[template(path = "../frontend/content/debug_error.html")]
+pub struct DebugError<'a> {
+    pub err: &'a str,
+}
+
+#[derive(Template)]
 #[template(path = "../frontend/content/settings/settings.html")]
 pub struct Settings {
     pub admin_settings: Option<Vec<Setting>>,
