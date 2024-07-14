@@ -171,7 +171,6 @@ pub struct Session {
     time_estimate: Arc<TimeKeeper>,
     next_recommended: Arc<Mutex<RecommendationPopupState>>,
     db: Database,
-    pub shutdown: Shutdown,
 }
 
 impl Session {
@@ -199,7 +198,7 @@ impl Session {
             time_estimate.clone(),
             channel.clone(),
             next_recommended.clone(),
-            shutdown.clone(),
+            shutdown,
         );
 
         let session = Self {
@@ -212,7 +211,6 @@ impl Session {
             time_estimate,
             next_recommended,
             db: db.clone(),
-            shutdown,
         };
 
         Ok(session)
