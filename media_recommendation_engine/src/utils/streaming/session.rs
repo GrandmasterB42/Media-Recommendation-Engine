@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{watch, Mutex, Notify};
 use tower::Service;
 use tower_http::services::ServeFile;
-use tracing::{error, warn};
+use tracing::error;
 
 use crate::{
     database::{Database, QueryRowGetConnExt},
@@ -143,7 +143,7 @@ impl StreamingSessions {
 
     pub async fn new_session(
         &mut self,
-        video_id: u64,
+        content_id: u64,
         db: &Database,
         shutdown: Shutdown,
     ) -> AppResult<u32> {
@@ -154,7 +154,7 @@ impl StreamingSessions {
             }
         };
 
-        let session = Session::new(db, shutdown, video_id)?;
+        let session = Session::new(db, shutdown, content_id)?;
         self.insert(random, session).await;
 
         Ok(random)
@@ -175,10 +175,14 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn new(db: &Database, shutdown: Shutdown, video_id: u64) -> AppResult<Self> {
-        let file_path: String = db
-            .get()?
-            .query_row_get("SELECT path FROM data_files WHERE id=?1", [video_id])?;
+    pub fn new(db: &Database, shutdown: Shutdown, content_id: u64) -> AppResult<Self> {
+        let file_path: String = db.get()?.query_row_get(
+            "SELECT data_file.path FROM content, data_file
+                WHERE content.data_id = data_file.id
+                AND content.id = ?1
+                AND part = 0",
+            [content_id],
+        )?;
 
         let stream = ServeFile::new(&file_path);
 
@@ -189,7 +193,7 @@ impl Session {
 
         let time_estimate = Arc::new(TimeKeeper::new(total_time));
 
-        let next_recommended = Arc::new(Mutex::new(RecommendationPopupState::new(db, video_id)));
+        let next_recommended = Arc::new(Mutex::new(RecommendationPopupState::new(db, content_id)));
 
         Self::send_recommendations(
             time_estimate.clone(),
@@ -199,7 +203,7 @@ impl Session {
         );
 
         let session = Self {
-            video_id: Mutex::new(video_id),
+            video_id: Mutex::new(content_id),
             file_path: Mutex::new(file_path),
             stream: Mutex::new(stream),
             receivers: Mutex::new(Vec::new()),
@@ -214,24 +218,26 @@ impl Session {
         Ok(session)
     }
 
-    pub async fn reuse(&self, video_id: u64) -> AppResult<()> {
-        let file_path: String = self
-            .db
-            .get()?
-            .query_row_get("SELECT path FROM data_files WHERE id=?1", [video_id])?;
+    pub async fn reuse(&self, content_id: u64) -> AppResult<()> {
+        let file_path: String = self.db.get()?.query_row_get(
+            "SELECT data_file.path FROM data_file, content 
+                    WHERE content.id = ?1
+                    AND content.data_id = data_file.id",
+            [content_id],
+        )?;
 
         if *self.file_path.lock().await == file_path {
             return Ok(());
         }
 
-        *self.video_id.lock().await = video_id;
+        *self.video_id.lock().await = content_id;
         self.file_path.lock().await.clone_from(&file_path);
 
         let media_context = ffmpeg::format::input(&file_path)?;
         let total_time = media_context.duration() as f64 / f64::from(ffmpeg::ffi::AV_TIME_BASE);
 
         self.time_estimate.reset(total_time).await;
-        *self.next_recommended.lock().await = RecommendationPopupState::new(&self.db, video_id);
+        *self.next_recommended.lock().await = RecommendationPopupState::new(&self.db, content_id);
 
         let serve_file = ServeFile::new(&file_path);
         self.replace_stream(serve_file, &file_path).await;
@@ -324,10 +330,16 @@ impl Session {
                     _ = shutdown.cancelled() => break,
                 }
 
-                let Ok(popup) = popup.lock().await.get_popup().await else {
-                    warn!("Rendering a recommendation popup failed!");
+                let Some(popup) = popup
+                    .lock()
+                    .await
+                    .get_popup()
+                    .await
+                    .log_warn_with_msg("Rendering a recommendation popup failed with error: ")
+                else {
                     continue;
                 };
+
                 let msg = WSSend::Notification {
                     msg: popup,
                     origin: u32::MAX, // Probably unlikely, doesn't matter for now
@@ -433,10 +445,10 @@ struct RecommendationPopupState {
 }
 
 impl RecommendationPopupState {
-    fn new(db: &Database, video_id: u64) -> Self {
+    fn new(db: &Database, content_id: u64) -> Self {
         let db = db.clone();
         Self {
-            inner: Store::Future(Box::pin(RecommendationPopup::new(db, video_id))),
+            inner: Store::Future(Box::pin(RecommendationPopup::new(db, content_id))),
         }
     }
 

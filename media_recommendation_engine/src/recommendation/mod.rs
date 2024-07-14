@@ -1,7 +1,8 @@
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::{params, OptionalExtension};
 
 use crate::{
-    database::{Database, QueryRowGetConnExt, QueryRowIntoConnExt},
+    database::{Connection, Database, QueryRowGetConnExt, QueryRowIntoConnExt},
+    indexing::{CollectionType, ContentType, TableId},
     state::{AppError, AppResult},
     utils::{pseudo_random_range, templates::RecommendationPopup, HandleErr},
 };
@@ -9,10 +10,10 @@ use crate::{
 // Probably spawn a recommendation Engine and have a mpsc channel in appstate, to be able to make request to the recommendation engine, which responds with a future. This entire things makes it so there is one global state for the recommendor
 
 impl RecommendationPopup {
-    pub async fn new(db: Database, video_id: u64) -> AppResult<Self> {
+    pub async fn new(db: Database, content_id: u64) -> AppResult<Self> {
         let recommendation = tokio::task::spawn_blocking(move || {
             let conn = db.get()?;
-            Self::recommend(&conn, video_id)
+            Self::recommend(&conn, content_id)
         });
 
         let Some(output) = recommendation
@@ -34,42 +35,84 @@ impl RecommendationPopup {
 
     // TODO: This doesn't recognize movies properly
     // This is not the end goal, just something to make it kinda work
-    fn recommend(conn: &rusqlite::Connection, video_id: u64) -> AppResult<Recommendation> {
-        let maybe_season_episode: Option<(u64, u64)> = conn
-            .query_row(
-                "SELECT seasonid, episode FROM episodes WHERE videoid=? AND referenceflag=0",
-                [video_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+    fn recommend(conn: &Connection, content_id: u64) -> AppResult<Recommendation> {
+        let this_episode: Option<u64> = conn
+            .query_row_get(
+                "SELECT episode.episode FROM content, episode
+                    WHERE content.type = ?1
+                    AND content.reference = episode.id
+                    AND content.id = ?2",
+                params![ContentType::Episode, content_id],
             )
             .optional()?;
 
-        let Some((season_id, episode)) = maybe_season_episode else {
+        let maybe_season_id: Option<(u64, u64, String)> = conn
+            .query_row_into(
+                "SELECT collection.id, season.season, season.title FROM collection_contains, collection, season
+                WHERE collection_contains.collection_id = collection.id
+                AND collection_contains.type = ?1
+                AND collection_contains.reference = ?2
+                AND collection.type = ?3
+                AND collection.reference = season.id",
+                params![TableId::Content, content_id, CollectionType::Season],
+            )
+            .optional()?;
+
+        let (Some((season_id, season, season_title)), Some(episode)) =
+            (maybe_season_id, this_episode)
+        else {
             return Recommendation::random(conn);
         };
 
-        let maybe_next_episode: Option<(u64, Option<String>, u64)> = conn
+        let maybe_next_episode: Option<(u64, String, u64)> = conn
             .query_row_into(
-                "SELECT videoid, title, episode FROM episodes WHERE seasonid=? AND episode=?",
-                [season_id, episode + 1],
+                "SELECT content.id, episode.title, episode.episode FROM collection_contains, episode, content
+                    WHERE collection_contains.collection_id = ?1
+                    AND collection_contains.type = ?2
+                    AND collection_contains.reference = content.id
+                    AND content.type = ?3
+                    AND content.reference = episode.id
+                    AND episode.episode = ?4",
+                params![season_id, TableId::Content, ContentType::Episode, episode + 1],
             )
             .optional()?;
 
         if let Some((next_episode_id, title, episode)) = maybe_next_episode {
             return Ok(Recommendation {
                 id: next_episode_id,
-                title: title.unwrap_or(format!("Episode {episode}")),
+                title: format!("{title} - {season_title} - Season {season} - Episode {episode}"),
             });
         }
 
-        let (series_id, season): (u64, u64) = conn.query_row_into(
-            "SELECT seriesid, season FROM seasons WHERE id=?",
-            [season_id],
+        let maybe_series_id: Option<u64> = conn.query_row_get(
+            "SELECT collection.id FROM collection, collection_contains
+                WHERE collection.id = collection_contains.collection_id
+                AND collection_contains.type = ?1
+                AND collection_contains.reference = ?2
+                AND collection.type = ?3",
+            params![TableId::Collection, season_id, CollectionType::Series],
         )?;
+
+        let Some(series_id) = maybe_series_id else {
+            return Recommendation::random(conn);
+        };
 
         let maybe_next_season: Option<u64> = conn
             .query_row_get(
-                "SELECT id FROM seasons WHERE seriesid=? AND season=?",
-                [series_id, season + 1],
+                "SELECT collection.id FROM collection, collection_contains, season
+                    WHERE collection.id = collection_contains.collection_id
+                    AND collection_contains.type = ?1
+                    AND collection_contains.reference = season.id
+                    AND collection.type = ?2
+                    AND season.season = ?3
+                    AND collection.reference = season.id
+                    AND collection_contains.collection_id = ?4",
+                params![
+                    TableId::Collection,
+                    CollectionType::Season,
+                    season + 1,
+                    series_id
+                ],
             )
             .optional()?;
 
@@ -77,18 +120,23 @@ impl RecommendationPopup {
             return Recommendation::random(conn);
         };
 
-        let maybe_first_episode: Option<(u64, Option<String>)> = conn
-            .query_row(
-                "SELECT videoid, title FROM episodes WHERE seasonid=? AND episode=?",
-                [next_season_id, 1],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+        let maybe_first_episode: Option<(u64, String)> = conn
+            .query_row_into(
+                "SELECT content.id, episode.title FROM collection_contains, episode, content
+                    WHERE collection_contains.collection_id = ?1
+                    AND collection_contains.type = ?2
+                    AND collection_contains.reference = content.id
+                    AND content.type = ?3
+                    AND content.reference = episode.id
+                    AND episode.episode = 1",
+                params![next_season_id, TableId::Content, ContentType::Episode],
             )
             .optional()?;
 
-        if let Some(maybe_first_episode) = maybe_first_episode {
+        if let Some((id, title)) = maybe_first_episode {
             Ok(Recommendation {
-                id: maybe_first_episode.0,
-                title: maybe_first_episode.1.unwrap_or("Episode 1".to_owned()),
+                id,
+                title: format!("{title} - Episode 1"),
             })
         } else {
             Recommendation::random(conn)
@@ -104,31 +152,32 @@ struct Recommendation {
 impl Recommendation {
     fn random(conn: &Connection) -> AppResult<Self> {
         // get a random movie or episode
-        let maybe_random_episode: Option<(u64, Option<String>, u64)> = conn
-            .query_row(
-                "SELECT videoid, title, episode FROM episodes WHERE referenceflag=0 ORDER BY RANDOM() LIMIT 1",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        let maybe_random_episode: Option<(u64, String, u64)> = conn
+            .query_row_into(
+                "SELECT episode.id, episode.title, episode.episode FROM episode, content 
+                WHERE episode.id = content.reference
+                AND content.type = ?1
+                ORDER BY RANDOM() LIMIT 1",
+                [ContentType::Episode],
             )
             .optional()?;
 
         let maybe_random_movie: Option<(u64, String)> = conn
-            .query_row(
-                "SELECT videoid, title FROM movies ORDER BY RANDOM() LIMIT 1",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+            .query_row_into(
+                "SELECT movie.id, movie.title FROM movie, content 
+                WHERE movie.id = content.reference
+                AND content.type = ?1
+                ORDER BY RANDOM() LIMIT 1",
+                [ContentType::Movie],
             )
             .optional()?;
 
         match (maybe_random_episode, maybe_random_movie) {
-            (Some((episode_id, title, episode)), None) => Ok(Recommendation {
-                id: episode_id,
-                title: title.unwrap_or(format!("Episode {episode}")),
+            (Some((id, title, episode)), None) => Ok(Recommendation {
+                id,
+                title: format!("{title} - Episode {episode}"),
             }),
-            (None, Some((movie_id, title))) => Ok(Recommendation {
-                id: movie_id,
-                title,
-            }),
+            (None, Some((id, title))) => Ok(Recommendation { id, title }),
             (None, None) => Err(AppError::Custom(
                 "No movies or episodes in database".to_string(),
             )),
@@ -137,7 +186,7 @@ impl Recommendation {
                 if random == 0 {
                     Ok(Recommendation {
                         id: episode_id,
-                        title: episode_title.unwrap_or(format!("Episode {episode}")),
+                        title: format!("{episode_title} - Episode {episode}"),
                     })
                 } else {
                     Ok(Recommendation {

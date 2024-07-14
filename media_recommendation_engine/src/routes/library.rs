@@ -11,12 +11,16 @@ use axum::{
 };
 
 use futures_util::{Stream, StreamExt};
+use rusqlite::params;
 use serde::Deserialize;
 use tokio_stream::wrappers::WatchStream;
 
 use crate::{
-    database::{Database, QueryRowGetConnExt, QueryRowIntoConnExt, QueryRowIntoStmtExt},
-    state::{AppResult, AppState, Shutdown},
+    database::{
+        Connection, Database, QueryRowGetConnExt, QueryRowIntoConnExt, QueryRowIntoStmtExt,
+    },
+    indexing::{resolve_video, CollectionType, ContentType, TableId},
+    state::{AppError, AppResult, AppState, Shutdown},
     utils::{
         frontend_redirect, frontend_redirect_explicit,
         streaming::StreamingSessions,
@@ -36,8 +40,8 @@ async fn get_library(State(db): State<Database>) -> AppResult<impl IntoResponse>
     let conn = db.get()?;
 
     let franchises = conn
-        .prepare("SELECT id, title FROM franchise")?
-        .query_map_into([])?
+        .prepare("SELECT collection.id, franchise.title FROM collection, franchise WHERE collection.reference = franchise.id AND collection.type = ?1")?
+        .query_map_into([CollectionType::Franchise])?
         .collect::<Result<Vec<(u64, String)>, _>>()?
         .iter()
         .map(|(id, title)| GridElement {
@@ -88,65 +92,60 @@ async fn preview(
 }
 
 fn top_preview(conn: Database, id: u64, prev: Preview) -> AppResult<LargeImage> {
-    fn season_title(
-        conn: &rusqlite::Connection,
-        season_id: u64,
-    ) -> Result<String, rusqlite::Error> {
-        let (season_title, season, seriesid): (Option<String>, u64, u64) = conn.query_row_into(
-            "SELECT title, season, seriesid FROM seasons WHERE id=?1",
-            [season_id],
-        )?;
-
-        let title = season_title.unwrap_or({
-            let series_title: String =
-                conn.query_row_get("SELECT title FROM series WHERE id=?1", [seriesid])?;
-            format!("{series_title} Season {season}")
-        });
-        Ok(title)
-    }
-
     let conn = conn.get()?;
 
     let (title, image_interaction) = match prev {
         Preview::Franchise => (
-            conn.query_row_get("SELECT title FROM franchise WHERE id=?1", [id])?,
+            conn.query_row_get(
+                "SELECT franchise.title FROM franchise, collection
+                WHERE collection.reference = franchise.id
+                AND collection.id=?1
+                AND collection.type = ?2",
+                params![id, CollectionType::Franchise],
+            )?,
             String::new(),
         ),
         Preview::Movie => {
-            let (video_id, reference_flag, title): (u64, u64, String) = conn.query_row_into(
-                "SELECT videoid, referenceflag, title FROM movies WHERE id=?1",
-                [id],
-            )?;
-            let video_id = resolve_video(&conn, video_id, reference_flag)?;
+            let title: String =
+                conn.query_row_get("SELECT movie.title FROM movie WHERE movie.id=?1", [id])?;
+
+            let video_id = resolve_video(&conn, id, ContentType::Movie)?;
             (
                 title,
                 frontend_redirect_explicit(&format!("/video/{video_id}"), HXTarget::All, None),
             )
         }
         Preview::Series => (
-            conn.query_row_get("SELECT title FROM series WHERE id=?1", [id])?,
+            conn.query_row_get(
+                "SELECT series.title FROM series, collection
+                    WHERE collection.reference = series.id
+                    AND collection.type = ?1
+                    AND collection.id = ?2",
+                params![CollectionType::Series, id],
+            )?,
             String::new(),
         ),
-        Preview::Season => (season_title(&conn, id)?, String::new()),
+        Preview::Season => {
+            let title = conn.query_row_get(
+                "SELECT season.title FROM season, collection
+                    WHERE collection.reference = season.id
+                    AND collection.type = ?1
+                    AND collection.id = ?2",
+                params![CollectionType::Season, id],
+            )?;
+
+            (title, String::new())
+        }
         Preview::Episode => {
-            let (title, episode, video_id, reference_flag, season_id): (
-                Option<String>,
-                u64,
-                u64,
-                u64,
-                u64,
-            ) = conn.query_row_into(
-                "SELECT title, episode, videoid, referenceflag, seasonid FROM episodes WHERE id=?1",
+            let (title, episode): (String, u64) = conn.query_row_into(
+                "SELECT episode.title, episode.episode FROM episode WHERE episode.id = ?1",
                 [id],
             )?;
 
-            let season_title = season_title(&conn, season_id)?;
-            let title = title.unwrap_or(format!("{season_title} - Episode {episode}"));
-
-            let video_id = resolve_video(&conn, video_id, reference_flag)?;
+            let video_id = resolve_video(&conn, id, ContentType::Episode)?;
 
             (
-                title,
+                format!("{title} - Episode {episode}"),
                 frontend_redirect_explicit(&format!("/video/{video_id}"), HXTarget::All, None),
             )
         }
@@ -164,22 +163,32 @@ fn preview_categories(
     prev: Preview,
 ) -> AppResult<Vec<(&'static str, Vec<GridElement>)>> {
     fn inner(
-        conn: &rusqlite::Connection,
+        conn: &Connection,
         id: u64,
         prev: Preview,
     ) -> AppResult<Vec<(&'static str, Vec<GridElement>)>> {
         match prev {
             Preview::Franchise => {
-                let movies: Vec<(u64, u64, String, u64)> = conn
-                    .prepare(
-                        "SELECT videoid, referenceflag, title, id FROM movies WHERE franchiseid=?1",
-                    )?
-                    .query_map_into([id])?
+                let movies: Vec<(String, u64)> = conn
+                    .prepare("SELECT movie.title, movie.id FROM movie, collection, collection_contains, content
+                                WHERE content.reference = movie.id
+                                AND content.type = ?1
+                                AND collection.id = collection_contains.collection_id
+                                AND collection.type = ?2
+                                AND collection_contains.collection_id = ?3
+                                AND collection_contains.type = ?4
+                                AND collection_contains.reference = content.id")?
+                    .query_map_into(params![ContentType::Movie, CollectionType::Franchise, id, TableId::Content])?
                     .collect::<Result<_, _>>()?;
 
                 let series: Vec<(u64, String)> = conn
-                    .prepare("SELECT series.id, series.title FROM series WHERE franchiseid=?1")?
-                    .query_map_into([id])?
+                    .prepare("SELECT collection.id, series.title FROM series, collection, collection_contains
+                                WHERE collection.reference = series.id
+                                AND collection.type = ?1
+                                AND collection_contains.collection_id = ?2
+                                AND collection_contains.type = ?3
+                                AND collection_contains.reference = collection.id")?
+                    .query_map_into(params![CollectionType::Series, id, TableId::Collection])?
                     .collect::<Result<_, _>>()?;
 
                 let mut out = Vec::new();
@@ -188,8 +197,8 @@ fn preview_categories(
                     1.. => {
                         let items = movies
                             .into_iter()
-                            .map(|(video_id, reference_flag, title, id)| {
-                                let video_id = resolve_video(conn, video_id, reference_flag)?;
+                            .map(|(title, movie_id)| {
+                                let video_id = resolve_video(conn, movie_id, ContentType::Movie)?;
                                 Ok(GridElement {
                                     title,
                                     redirect_entire: String::new(),
@@ -199,7 +208,7 @@ fn preview_categories(
                                         None,
                                     ),
                                     redirect_title: frontend_redirect(
-                                        &format!("/preview/Movie/{id}"),
+                                        &format!("/preview/Movie/{movie_id}"),
                                         HXTarget::Content,
                                     ),
                                 })
@@ -234,19 +243,38 @@ fn preview_categories(
                 Ok(out)
             }
             Preview::Series => {
-                let season_count: u64 =
-                    conn.query_row_get("SELECT COUNT(*) FROM seasons WHERE seriesid=?1", [id])?;
+                let season_count: u64 = conn.query_row_get(
+                    "SELECT COUNT(*) FROM collection_contains, collection
+                        WHERE collection_contains.collection_id = ?1
+                        AND collection_contains.type = ?2
+                        AND collection.type = ?3
+                        AND collection_contains.reference = collection.id",
+                    params![id, TableId::Collection, CollectionType::Season],
+                )?;
 
                 match season_count {
                     0 => Ok(Vec::new()),
                     1 => {
-                        let season_id: u64 =
-                            conn.query_row_get("SELECT id FROM seasons WHERE seriesid=?1", [id])?;
+                        let season_id: u64 = conn.query_row_get(
+                            "SELECT id FROM collection, collection_contains
+                                WHERE collection_contains.collection_id = ?1
+                                AND collection_contains.type = ?2
+                                AND collection.type = ?3
+                                AND collection_contains.reference = collection.id",
+                            params![id, TableId::Collection, CollectionType::Season],
+                        )?;
                         inner(conn, season_id, Preview::Season)
                     }
                     2.. => {
-                        let items = conn.prepare("SELECT id, title, season FROM seasons WHERE seriesid=?1 ORDER BY season ASC")?
-                    .query_map_into([id])?
+                        let items = conn.prepare(
+                            "SELECT collection.id, season.title, season.season FROM season, collection_contains, collection
+                                WHERE collection_contains.collection_id = ?1
+                                AND collection_contains.type = ?2
+                                AND collection.type = ?3
+                                AND collection_contains.reference = collection.id
+                                AND collection.reference = season.id
+                                ORDER BY season.season ASC")?   
+                    .query_map_into(params![id, TableId::Collection, CollectionType::Season])?
                     .collect::<Result<Vec<(u64, Option<String>, u64)>, _>>()?
                     .into_iter()
                     .map(|(season_id, title, season)| {
@@ -267,27 +295,37 @@ fn preview_categories(
                 }
             }
             Preview::Season => {
-                let items = conn.prepare("SELECT videoid, title, episode, id FROM episodes WHERE seasonid=?1 AND referenceflag = 0 ORDER BY episode ASC")?
-                .query_map_into([id])?
-                .collect::<Result<Vec<(u64, Option<String>, u64, u64)>, _>>()?
+                let items = conn.prepare(
+                    "SELECT episode.id, episode.title, episode.episode FROM episode, collection, collection_contains, content
+                    WHERE content.reference = episode.id
+                    AND content.type = ?4
+                    AND collection.type = ?1
+                    AND collection.id = collection_contains.collection_id
+                    AND collection_contains.collection_id = ?2
+                    AND collection_contains.type = ?3
+                    AND collection_contains.reference = content.id
+                    ORDER BY episode.episode ASC")?
+                .query_map_into(params![CollectionType::Season, id, TableId::Content, ContentType::Episode])?
+                .collect::<Result<Vec<(u64, String, u64,)>, _>>()?
                 .into_iter()
-                .map(|(videoid, name, episode, id)| {
-                    let name = name.unwrap_or(format!("Episode {episode}"));
-                    GridElement {
+                .map(|(data_id, name, episode)| {
+                    let name = format!("{name} - Episode {episode}");
+                    let video_id = resolve_video(conn, data_id, ContentType::Episode)?;
+                    Ok(GridElement {
                         title: name,
                         redirect_entire: String::new(),
                         redirect_img: frontend_redirect_explicit(
-                            &format!("/video/{videoid}"),
+                            &format!("/video/{video_id}"),
                             HXTarget::All,
                             None,
                         ),
                         redirect_title: frontend_redirect(
-                            &format!("/preview/Episode/{id}"),
+                            &format!("/preview/Episode/{data_id}"),
                             HXTarget::Content,
                         ),
-                    }
+                    })
                 })
-                .collect::<Vec<GridElement>>();
+                .collect::<Result<Vec<GridElement>, AppError>>()?;
                 Ok(vec![("<h2> Episodes </h2>", items)])
             }
             Preview::Episode | Preview::Movie => Ok(Vec::new()),
@@ -296,21 +334,6 @@ fn preview_categories(
 
     let conn = db.get()?;
     inner(&conn, id, prev)
-}
-
-fn resolve_video(
-    conn: &rusqlite::Connection,
-    video_id: u64,
-    reference_flag: u64,
-) -> Result<u64, rusqlite::Error> {
-    if reference_flag == 1 {
-        conn.query_row_get(
-            "SELECT videoid FROM multipart WHERE id = ?1 AND part = 1",
-            [video_id],
-        )
-    } else {
-        Ok(video_id)
-    }
 }
 
 /*

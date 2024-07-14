@@ -155,6 +155,7 @@ pub enum AppError {
     #[allow(non_camel_case_types)]
     ffmpeg(ffmpeg::Error),
     Status(StatusCode),
+    Dyn(Box<dyn std::error::Error + Send + Sync>),
     Custom(String),
 }
 
@@ -166,6 +167,7 @@ impl Display for AppError {
             AppError::Templating(e) => write!(f, "Templating Error: {e}"),
             AppError::ffmpeg(e) => write!(f, "ffmpeg Error: {e}"),
             AppError::Status(e) => write!(f, "{e}"),
+            AppError::Dyn(e) => write!(f, "{e}"),
             AppError::Custom(e) => write!(f, "Custom Error: {e}"),
         }
     }
@@ -206,6 +208,20 @@ impl From<&str> for AppError {
 impl From<ffmpeg::Error> for AppError {
     fn from(e: ffmpeg::Error) -> Self {
         AppError::ffmpeg(e)
+    }
+}
+
+pub trait DynErrExt<T> {
+    fn dyn_err(self) -> AppResult<T>;
+}
+
+impl<T, E> DynErrExt<T> for Result<T, E>
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    #[inline]
+    fn dyn_err(self) -> AppResult<T> {
+        self.map_err(|e| AppError::Dyn(Box::new(e)))
     }
 }
 
