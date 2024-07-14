@@ -1,5 +1,6 @@
 use std::{collections::HashSet, ffi::OsStr, path::Path};
 
+use anyhow::Context;
 use rusqlite::{params, OptionalExtension};
 use tracing::warn;
 
@@ -8,7 +9,7 @@ use crate::{
         Connection, QueryRowGetConnExt, QueryRowGetStmtExt, QueryRowIntoConnExt,
         QueryRowIntoStmtExt,
     },
-    state::{AppResult, DynErrExt},
+    state::AppResult,
     utils::{Ignore, ParseBetween, ParseUntil},
 };
 
@@ -393,7 +394,7 @@ fn infer_collection_from_path(path: &Path) -> AppResult<CollectionHint> {
                 .trim_start_matches("season")
                 .trim_start()
                 .parse_until(|c: char| !c.is_ascii_digit())
-                .dyn_err()?;
+                .with_context(|| format!("Failed to parse season number from \"{next}\""))?;
 
             let title = next.split_once('-').unwrap_or(("", &next)).1.trim();
 

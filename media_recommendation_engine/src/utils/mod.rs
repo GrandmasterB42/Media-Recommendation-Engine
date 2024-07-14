@@ -33,6 +33,16 @@ macro_rules! relative {
 }
 pub(crate) use relative;
 
+macro_rules! bail {
+    ($err:expr) => {
+        return Err(crate::state::AppError::Anyhow(anyhow::anyhow!($err)))
+    };
+    ($fmt:expr, $($arg:tt)*) => {
+        return Err(AppError::Anyhow(anyhow!(format!($fmt, $($arg)*))))
+    };
+}
+pub(crate) use bail;
+
 pub fn pseudo_random() -> u32 {
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)

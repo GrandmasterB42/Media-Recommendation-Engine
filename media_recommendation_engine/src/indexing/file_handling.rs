@@ -6,13 +6,11 @@ use std::{
     time::SystemTime,
 };
 
+use anyhow::Context;
 use sha2::Digest;
 use tracing::warn;
 
-use crate::{
-    state::{AppResult, DynErrExt},
-    utils::HandleErr,
-};
+use crate::{state::AppResult, utils::HandleErr};
 
 pub fn scan_dir(path: &Path, recurse: bool) -> Vec<PathBuf> {
     path.read_dir().map_or(Vec::new(), |read_dir| {
@@ -65,7 +63,8 @@ impl HashFile for Path {
         const SKIP_AMOUNT: i64 = BUFFER_SIZE as i64 * 15; // Skip 30 Mib for every 2 MiB read
 
         let mut hasher = sha2::Sha256::new();
-        let mut file = std::fs::File::open(self).dyn_err()?;
+        let mut file = std::fs::File::open(self)
+            .with_context(|| format!("Failed to open \"{self:?}\" for hashing"))?;
         let mut buffer = vec![0u8; BUFFER_SIZE];
         loop {
             let Ok(count) = file.read(&mut buffer) else {

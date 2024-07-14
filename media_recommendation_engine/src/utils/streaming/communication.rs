@@ -16,7 +16,7 @@ use tracing::debug;
 
 use crate::{
     state::{AppResult, Shutdown},
-    utils::{auth::User, templates::Notification as NotificationTemplate, HandleErr},
+    utils::{auth::User, bail, templates::Notification as NotificationTemplate, HandleErr},
 };
 
 use super::{session::SessionState, Session};
@@ -305,7 +305,7 @@ impl SessionChannel {
     ) -> AppResult<()> {
         let Ok(msg) = serde_json::from_str(&message) else {
             debug!("Received malformed json from session websocket: {message}");
-            return Err("exited because of malformed json".into());
+            bail!("exited because of malformed json");
         };
 
         match msg {

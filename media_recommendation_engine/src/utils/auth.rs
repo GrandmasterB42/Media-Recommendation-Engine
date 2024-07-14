@@ -1,5 +1,6 @@
 use std::{collections::HashSet, convert::Infallible, ops::Deref};
 
+use anyhow::Context;
 use axum::{
     async_trait,
     body::Body,
@@ -26,6 +27,7 @@ use time::OffsetDateTime;
 use crate::{
     database::{Database, QueryRowGetConnExt, QueryRowIntoConnExt, QueryRowIntoStmtExt},
     state::{AppError, AppResult},
+    utils::bail,
 };
 
 use super::ConvertErr;
@@ -41,9 +43,7 @@ impl AuthExt for AuthSession {
         if let Some(user) = &self.user {
             self.backend.has_perm(user, perm.into()).await
         } else {
-            Err(AppError::Custom(
-                "Tried to check permission of a user that isn't logged in".to_string(),
-            ))
+            bail!("Tried to check permission of a user that isn't logged in");
         }
     }
 }
@@ -166,7 +166,7 @@ impl AuthnBackend for Database {
             }))
         })
         .await
-        .map_err(|e| AppError::Custom(e.to_string()))?
+        .with_context(|| "Failed to rejoin with password verification task")?
     }
 
     async fn get_user(&self, id: &UserId<Self>) -> Result<Option<Self::User>, Self::Error> {

@@ -23,7 +23,7 @@ use tracing::error;
 
 use crate::{
     database::{Database, QueryRowGetConnExt},
-    state::{AppError, AppResult, Shutdown},
+    state::{AppResult, Shutdown},
     utils::{
         auth::User,
         frontend_redirect, pseudo_random,
@@ -423,8 +423,8 @@ impl TimeKeeper {
             };
 
             tokio::select! {
-                _ = shutdown.cancelled() => { return Err(AppError::Custom("Cancelled".to_owned())) }
-                _ = tokio::time::sleep(duration) => { break }
+                _ = shutdown.cancelled() => return Ok(()),
+                _ = tokio::time::sleep(duration) => break,
                 _ = timekeeper.was_updated.notified() => {}
             }
         }

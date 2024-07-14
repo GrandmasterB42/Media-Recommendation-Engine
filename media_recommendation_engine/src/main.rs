@@ -4,6 +4,7 @@ extern crate ffmpeg_next as ffmpeg;
 
 use std::collections::HashSet;
 
+use anyhow::Context;
 use axum::{middleware, response::Redirect, routing::get, Router};
 
 use axum_login::{
@@ -12,7 +13,7 @@ use axum_login::{
 };
 use clap::{Parser, ValueEnum};
 use futures_util::FutureExt;
-use state::{AppError, AppResult, Shutdown};
+use state::{AppResult, Shutdown};
 use time::Duration;
 use tokio::{net::TcpListener, signal};
 
@@ -183,7 +184,7 @@ async fn handle_data_delete(delete_data: Option<Vec<DeleteKind>>) -> AppResult<(
     for sql in delete_sql {
         let sql_file = tokio::fs::read_to_string(format!("database/sql/deletion/{sql}"))
             .await
-            .map_err(|_| AppError::Custom(format!("Failed to open \"{sql}\"")))?;
+            .with_context(|| format!("Failed to open \"{sql}\""))?;
         conn.execute_batch(&sql_file)?;
     }
 

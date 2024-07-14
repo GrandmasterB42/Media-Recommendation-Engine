@@ -225,9 +225,7 @@ async fn remove_user(
     Path(user_id): Path<u64>,
 ) -> AppResult<impl IntoResponse> {
     if !auth.has_perm("owner").await? {
-        return Err(AppError::Custom(
-            "User doesn't have the permissions to delete a user".to_owned(),
-        ));
+        bail!("User doesn't have the permissions to delete a user");
     }
     let conn = db.get()?;
 
@@ -239,7 +237,7 @@ async fn remove_user(
     )?;
 
     if is_admin {
-        return Err(AppError::Custom("This user can't be deleted".to_owned()));
+        bail!("This user can't be deleted");
     }
 
     conn.execute("DELETE FROM users WHERE id = ?1", [user_id])?;

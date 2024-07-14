@@ -3,7 +3,7 @@ use rusqlite::{params, OptionalExtension};
 use crate::{
     database::{Connection, Database, QueryRowGetConnExt, QueryRowIntoConnExt},
     indexing::{CollectionType, ContentType, TableId},
-    state::{AppError, AppResult},
+    state::AppResult,
     utils::{pseudo_random_range, templates::RecommendationPopup, HandleErr},
 };
 
@@ -21,9 +21,7 @@ impl RecommendationPopup {
             .log_err_with_msg("failed to resolve tokio thread for recommendation")
             .transpose()?
         else {
-            return Err(AppError::Custom(
-                "No recommendations could be made".to_string(),
-            ));
+            bail!("No recommendations could be made");
         };
 
         Ok(RecommendationPopup {
@@ -178,9 +176,7 @@ impl Recommendation {
                 title: format!("{title} - Episode {episode}"),
             }),
             (None, Some((id, title))) => Ok(Recommendation { id, title }),
-            (None, None) => Err(AppError::Custom(
-                "No movies or episodes in database".to_string(),
-            )),
+            (None, None) => bail!("No movies or episodes in database"),
             (Some((episode_id, episode_title, episode)), Some((movie_id, movie_title))) => {
                 let random = pseudo_random_range(0, 2);
                 if random == 0 {
