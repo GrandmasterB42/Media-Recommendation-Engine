@@ -152,7 +152,7 @@ impl Recommendation {
         // get a random movie or episode
         let maybe_random_episode: Option<(u64, String, u64)> = conn
             .query_row_into(
-                "SELECT episode.id, episode.title, episode.episode FROM episode, content 
+                "SELECT content.id, episode.title, episode.episode FROM episode, content 
                 WHERE episode.id = content.reference
                 AND content.type = ?1
                 ORDER BY RANDOM() LIMIT 1",
@@ -162,7 +162,7 @@ impl Recommendation {
 
         let maybe_random_movie: Option<(u64, String)> = conn
             .query_row_into(
-                "SELECT movie.id, movie.title FROM movie, content 
+                "SELECT content.id, movie.title FROM movie, content 
                 WHERE movie.id = content.reference
                 AND content.type = ?1
                 ORDER BY RANDOM() LIMIT 1",
