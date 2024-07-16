@@ -1,0 +1,25 @@
+<div class="admin_settings">
+    <h2> Admin Settings </h2>
+
+    {% for setting in admin_settings %}
+    {{ setting|safe }}
+    {% endfor %}
+
+    <div class="danger">
+        <h3> Danger Zone </h3>
+
+        <div class="centered">
+            <button type="button" hx-post="/settings/shutdown"
+                hx-confirm="Are you sure you want to shut down the Server?" hx-swap="none" class="shutdown">
+                Shutdown
+            </button>
+
+            <button type="button" hx-post="/settings/restart" hx-confirm="Are you sure you want to restart the Server?"
+                hx-swap="none" class="shutdown">
+                Restart
+            </button>
+        </div>
+
+    </div>
+
+</div>

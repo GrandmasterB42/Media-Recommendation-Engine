@@ -2,6 +2,8 @@ use std::fmt::Display;
 
 use askama::Template;
 
+use crate::routes::Section;
+
 pub trait AsDisplay: Display {
     fn to_box(self) -> Box<dyn Display>;
 }
@@ -47,9 +49,29 @@ pub struct DebugError<'a> {
 #[derive(Template)]
 #[template(path = "../frontend/content/settings/settings.html")]
 pub struct Settings {
-    pub admin_settings: Option<Vec<Setting>>,
-    pub account_settings: Vec<Setting>,
+    pub enabled_button: Section,
+    pub load_profile: String,
+    pub load_admin: Option<String>,
+    pub load_account: String,
     pub redirect_back: String,
+    pub default_route: String,
+}
+
+#[derive(Template)]
+#[template(path = "../frontend/content/settings/admin_section.html")]
+pub struct AdminSettings {
+    pub admin_settings: Vec<Setting>,
+}
+
+#[derive(Template)]
+#[template(path = "../frontend/content/settings/account_section.html")]
+pub struct AccountSettings {
+    pub account_settings: Vec<Setting>,
+}
+
+#[derive(Template)]
+#[template(path = "../frontend/content/settings/profile_section.html")]
+pub struct ProfileSettings {
     pub name: String,
 }
 

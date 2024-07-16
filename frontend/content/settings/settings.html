@@ -12,84 +12,23 @@
 
         <div class="settings-selector">
 
-            <input checked type="radio" id="profile" name="setting" class="select">
+            <input checked type="radio" id="profile" name="setting" {{load_profile|safe}} {% if let
+                Section::Profile=enabled_button %}checked="checked" {% endif %}>
             <label for="profile" class="input_label"> Profile </label>
 
-            {% if let Some(_) = admin_settings %}
-            <input type="radio" id="admin_settings" name="setting" class="select">
+            {% if let Some(load_admin) = load_admin %}
+            <input type="radio" id="admin_settings" name="setting" {{load_admin|safe}} {% if let
+                Section::Admin=enabled_button %}checked="checked" {% endif %}>
             <label for="admin_settings"> Admin Settings </label>
             {% endif %}
 
-            <input type="radio" id="account_settings" name="setting" class="select">
+            <input type="radio" id="account_settings" name="setting" {{load_account|safe}} {% if let
+                Section::Account=enabled_button %}checked="checked" {% endif %}>
             <label for="account_settings"> Account Settings </label>
 
         </div>
 
-
-        <div class="settings">
-
-            <div class="section profile">
-                <div class="profile-card">
-                    <h2> Profile </h2>
-                    <div class="profile-img"> </div>
-                    <p id="name"> {{ name }} </p>
-                </div>
-
-                <div class="change-user" autocomplete="off">
-                    <form class="change-form" hx-patch="/settings/username" hx-swap="none"
-                        hx-confirm="This action will change your username! You will be logged out! Are you sure?">
-                        <input type="text" placeholder="New Username" name="name" class="change-input"> </input>
-                        <button type="submit"> Apply </button>
-                    </form>
-                    <form class="change-form" hx-patch="/settings/password" hx-swap="none"
-                        hx-confirm="This action will change your password! You will be logged out! Are you sure?">
-                        <input type="password" placeholder="New Password" name="password" class="change-input">
-                        </input>
-                        <button type="submit"> Apply </button>
-                    </form>
-                    <div id="error"></div>
-                </div>
-
-            </div>
-
-
-            {% if let Some(admin_settings) = admin_settings %}
-            <div class="section admin_settings">
-                <h2> Admin Settings </h2>
-
-                {% for setting in admin_settings %}
-                {{ setting|safe }}
-                {% endfor %}
-
-                <div class="danger">
-                    <h3> Danger Zone </h3>
-
-                    <div class="centered">
-                        <button type="button" hx-post="/settings/shutdown"
-                            hx-confirm="Are you sure you want to shut down the Server?" hx-swap="none" class="shutdown">
-                            Shutdown
-                        </button>
-
-                        <button type="button" hx-post="/settings/restart"
-                            hx-confirm="Are you sure you want to restart the Server?" hx-swap="none" class="shutdown">
-                            Restart
-                        </button>
-                    </div>
-
-                </div>
-
-            </div>
-            {% endif %}
-
-            <div class="section account_settings">
-                <h2> Account Settings </h2>
-
-                {% for setting in account_settings %}
-                {{ setting|safe }}
-                {% endfor %}
-
-            </div>
-
+        <div class="settings" id=section hx-trigger="load" hx-get={{default_route}}>
         </div>
 
     </div>

@@ -14,6 +14,8 @@ pub use login::login;
 pub use settings::settings;
 pub use streaming::streaming;
 
+pub use settings::Section;
+
 use crate::state::AppState;
 use axum::{
     http::{HeaderName, HeaderValue},

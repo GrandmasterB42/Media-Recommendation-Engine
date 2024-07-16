@@ -1,6 +1,6 @@
 use askama_axum::IntoResponse;
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     routing::{delete, get, patch, post},
     Form, Router,
@@ -15,7 +15,8 @@ use crate::{
     utils::{
         frontend_redirect,
         templates::{
-            AsDisplay, Creation, CreationInput, LocationEntry, Setting, Settings, SwapIn, UserEntry,
+            AccountSettings, AdminSettings, AsDisplay, Creation, CreationInput, LocationEntry,
+            ProfileSettings, Setting, Settings, SwapIn, UserEntry,
         },
         AuthExt, AuthSession, HXTarget, HandleErr, ServerSettings,
     },
@@ -24,6 +25,9 @@ use crate::{
 pub fn settings() -> Router<AppState> {
     Router::new()
         .route("/", get(settings_page))
+        .route("/profile", get(profile_section))
+        .route("/admin", get(admin_section))
+        .route("/account", get(account_section))
         .route("/shutdown", post(shutdown))
         .route("/restart", post(restart))
         .route("/username", patch(username))
@@ -35,23 +39,103 @@ pub fn settings() -> Router<AppState> {
         .route("/location/recurse/:id", patch(recurse_location))
 }
 
+#[derive(Deserialize)]
+struct Location {
+    content: Section,
+}
+
+impl Default for Location {
+    fn default() -> Self {
+        Self {
+            content: Section::Profile,
+        }
+    }
+}
+
+pub enum Section {
+    Profile,
+    Admin,
+    Account,
+}
+
+impl Section {
+    fn serialize(&self) -> &'static str {
+        match self {
+            Self::Profile => "/settings/profile",
+            Self::Admin => "/settings/admin",
+            Self::Account => "/settings/account",
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Section {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+
+        Ok(match s.as_str() {
+            "/settings/profile" => Self::Profile,
+            "/settings/admin" => Self::Admin,
+            "/settings/account" => Self::Account,
+            _ => return Err(serde::de::Error::custom("invalid location")),
+        })
+    }
+}
+
 async fn settings_page(
     auth: AuthSession,
-    State(db): State<Database>,
+    location: Option<Query<Location>>,
 ) -> AppResult<impl IntoResponse> {
-    let admin_settings = if auth.has_perm("owner").await? {
-        Some(vec![location_addition(&db)?, user_creation(&db)?])
+    let Query(location) = location.unwrap_or_default();
+
+    fn into_section(section: Section) -> String {
+        format!(
+            r#"hx-get="{route}" hx-target=#section hx-push-url="/?all=/settings?content={route}""#,
+            route = section.serialize(),
+        )
+    }
+
+    let load_admin = if auth.has_perm("owner").await? {
+        Some(into_section(Section::Admin))
     } else {
         None
     };
 
-    let name = auth.user.unwrap().username; // This route has logged in as a wrapper
-
     Ok(Settings {
-        admin_settings,
-        account_settings: vec![],
         redirect_back: frontend_redirect("/", HXTarget::All),
-        name,
+        default_route: location.content.serialize().to_string(),
+        load_profile: into_section(Section::Profile),
+        load_admin,
+        load_account: into_section(Section::Account),
+        enabled_button: location.content,
+    })
+}
+
+async fn profile_section(auth: AuthSession) -> AppResult<impl IntoResponse> {
+    Ok(ProfileSettings {
+        // This route has logged in as a wrapper
+        name: auth.user.unwrap().username,
+    })
+}
+
+async fn admin_section(
+    auth: AuthSession,
+    State(db): State<Database>,
+) -> AppResult<impl IntoResponse> {
+    let admin_settings = if auth.has_perm("owner").await? {
+        vec![location_addition(&db)?, user_creation(&db)?]
+    } else {
+        return AppResult::Err(AppError::Status(StatusCode::UNAUTHORIZED));
+    };
+
+    Ok(AdminSettings { admin_settings })
+}
+
+async fn account_section() -> AppResult<impl IntoResponse> {
+    Ok(AccountSettings {
+        account_settings: Vec::new(),
     })
 }
 
