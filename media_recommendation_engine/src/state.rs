@@ -15,29 +15,20 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     database::Database,
-    utils::{streaming::StreamingSessions, templates::DebugError, ServerSettings},
+    utils::{streaming::StreamingSessions, ServerSettings},
 };
 
 #[derive(Clone)]
 pub struct AppState {
     database: Database,
     streaming_sessions: StreamingSessions,
-    shutdown: Shutdown,
-    serversettings: ServerSettings,
-    indexing_trigger: IndexingTrigger,
+    pub shutdown: Shutdown,
+    pub serversettings: ServerSettings,
+    pub indexing_trigger: IndexingTrigger,
 }
 
 impl AppState {
-    pub async fn new(
-        database: Database,
-        port: Option<u16>,
-    ) -> (
-        Self,
-        Shutdown,
-        ServerSettings,
-        IndexingTrigger,
-        oneshot::Receiver<bool>,
-    ) {
+    pub async fn new(database: Database, port: Option<u16>) -> (Self, oneshot::Receiver<bool>) {
         let (shutdown, restart_receiver) = Shutdown::new();
         let streaming_sessions = StreamingSessions::new(shutdown.clone());
         let serversettings = ServerSettings::new(shutdown.clone(), database.clone(), port).await;
@@ -46,13 +37,10 @@ impl AppState {
             Self {
                 database,
                 streaming_sessions,
-                shutdown: shutdown.clone(),
-                serversettings: serversettings.clone(),
-                indexing_trigger: indexing_trigger.clone(),
+                shutdown,
+                serversettings,
+                indexing_trigger,
             },
-            shutdown,
-            serversettings,
-            indexing_trigger,
             restart_receiver,
         )
     }
@@ -210,7 +198,7 @@ impl IntoResponse for AppError {
         #[cfg(debug_assertions)]
         return (
             http::StatusCode::INTERNAL_SERVER_ERROR,
-            DebugError {
+            crate::utils::templates::DebugError {
                 err: &format!("{self:?}"),
             },
         )

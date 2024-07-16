@@ -77,8 +77,11 @@ async fn server(port: Option<u16>, logging: Logging) -> bool {
 
     let auth = AuthManagerLayerBuilder::new(session_store, session_layer).build();
 
-    let (state, shutdown, settings, indexing_trigger, restart) =
-        AppState::new(db.clone(), port).await;
+    let (state, restart) = AppState::new(db.clone(), port).await;
+
+    let settings = state.serversettings.clone();
+    let indexing_trigger = state.indexing_trigger.clone();
+    let shutdown = state.shutdown.clone();
 
     let app = Router::new()
         .route("/", get(routes::homepage))
