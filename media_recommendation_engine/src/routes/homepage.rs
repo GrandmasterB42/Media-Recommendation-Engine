@@ -1,6 +1,6 @@
 use askama::Template;
 use askama_axum::IntoResponse;
-use axum::{debug_handler, extract::Query};
+use axum::extract::Query;
 use serde::Deserialize;
 
 use crate::{
@@ -19,7 +19,6 @@ pub enum Location {
     All { all: String },
 }
 
-#[debug_handler]
 pub async fn homepage(location: Option<Query<Location>>) -> AppResult<impl IntoResponse> {
     let mut body_html = Homepage {
         redirect_library: &frontend_redirect("/library", HXTarget::Content),
