@@ -1,7 +1,7 @@
 use std::convert::Infallible;
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     response::{
         sse::{Event, KeepAlive},
         IntoResponse, Sse,
@@ -11,20 +11,23 @@ use axum::{
 };
 
 use futures_util::{Stream, StreamExt};
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use serde::Deserialize;
 use tokio_stream::wrappers::WatchStream;
 
 use crate::{
     database::{
-        Connection, Database, QueryRowGetConnExt, QueryRowIntoConnExt, QueryRowIntoStmtExt,
+        Connection, Database, QueryRowGetConnExt, QueryRowGetStmtExt, QueryRowIntoConnExt,
+        QueryRowIntoStmtExt,
     },
     indexing::{resolve_video, CollectionType, ContentType, TableId},
     state::{AppError, AppResult, AppState, Shutdown},
     utils::{
         frontend_redirect, frontend_redirect_explicit,
         streaming::StreamingSessions,
-        templates::{GridElement, LargeImage, Library, PreviewTemplate},
+        templates::{
+            GridElement, LargeImage, Library, LoadNext, PaginationResponse, PreviewTemplate,
+        },
         HXTarget,
     },
 };
@@ -34,28 +37,19 @@ pub fn library() -> Router<AppState> {
         .route("/library", get(get_library))
         .route("/sessions", get(stream_sessions))
         .route("/preview/:preview/:id", get(preview))
+        .route("/library/:preview/:id", get(get_preview_items))
 }
 
-async fn get_library(State(db): State<Database>) -> AppResult<impl IntoResponse> {
-    let conn = db.get()?;
+#[derive(Deserialize)]
+struct Pagination {
+    page: u64,
+    per_page: u64,
+}
 
-    let franchises = conn
-        .prepare("SELECT collection.id, franchise.title FROM collection, franchise WHERE collection.reference = franchise.id AND collection.type = ?1")?
-        .query_map_into([CollectionType::Franchise])?
-        .collect::<Result<Vec<(u64, String)>, _>>()?
-        .iter()
-        .map(|(id, title)| GridElement {
-            title: title.clone(),
-            redirect_entire: frontend_redirect(
-                &format!("/preview/Franchise/{id}"),
-                HXTarget::Content,
-            ),
-            redirect_img: String::new(),
-            redirect_title: String::new(),
-        })
-        .collect::<Vec<_>>();
-
-    Ok(Library { franchises })
+async fn get_library() -> AppResult<impl IntoResponse> {
+    Ok(Library {
+        load_next: LoadNext::new("/library/Franchise/0".to_string(), 0, 20),
+    })
 }
 
 async fn stream_sessions(
@@ -161,84 +155,65 @@ fn preview_categories(
     db: &Database,
     id: u64,
     prev: Preview,
-) -> AppResult<Vec<(&'static str, Vec<GridElement>)>> {
+) -> AppResult<Vec<(&'static str, LoadNext)>> {
     fn inner(
         conn: &Connection,
         id: u64,
         prev: Preview,
-    ) -> AppResult<Vec<(&'static str, Vec<GridElement>)>> {
+    ) -> AppResult<Vec<(&'static str, LoadNext)>> {
+        let mut out = Vec::new();
+
         match prev {
             Preview::Franchise => {
-                let movies: Vec<(String, u64)> = conn
-                    .prepare("SELECT movie.title, movie.id FROM movie, collection, collection_contains, content
+                let movie_count: u64 = conn.query_row_get(
+                    "SELECT COUNT(*) FROM movie, collection, collection_contains, content
                                 WHERE content.reference = movie.id
                                 AND content.type = ?1
                                 AND collection.id = collection_contains.collection_id
                                 AND collection.type = ?2
                                 AND collection_contains.collection_id = ?3
                                 AND collection_contains.type = ?4
-                                AND collection_contains.reference = content.id")?
-                    .query_map_into(params![ContentType::Movie, CollectionType::Franchise, id, TableId::Content])?
-                    .collect::<Result<_, _>>()?;
+                                AND collection_contains.reference = content.id",
+                    params![
+                        ContentType::Movie,
+                        CollectionType::Franchise,
+                        id,
+                        TableId::Content
+                    ],
+                )?;
 
-                let series: Vec<(u64, String)> = conn
-                    .prepare("SELECT collection.id, series.title FROM series, collection, collection_contains
-                                WHERE collection.reference = series.id
-                                AND collection.type = ?1
-                                AND collection_contains.collection_id = ?2
-                                AND collection_contains.type = ?3
-                                AND collection_contains.reference = collection.id")?
-                    .query_map_into(params![CollectionType::Series, id, TableId::Collection])?
-                    .collect::<Result<_, _>>()?;
+                if movie_count > 0 {
+                    out.push((
+                        "<h1> Movies </h1>",
+                        LoadNext::new(format!("/library/Movie/{id}"), 0, 20),
+                    ));
+                }
 
-                let mut out = Vec::new();
-                let movies = match movies.len() {
-                    0 => Vec::new(),
-                    1.. => {
-                        let items = movies
-                            .into_iter()
-                            .map(|(title, movie_id)| {
-                                let video_id = resolve_video(conn, movie_id, ContentType::Movie)?;
-                                Ok(GridElement {
-                                    title,
-                                    redirect_entire: String::new(),
-                                    redirect_img: frontend_redirect_explicit(
-                                        &format!("/video/{video_id}"),
-                                        HXTarget::All,
-                                        None,
-                                    ),
-                                    redirect_title: frontend_redirect(
-                                        &format!("/preview/Movie/{movie_id}"),
-                                        HXTarget::Content,
-                                    ),
-                                })
-                            })
-                            .collect::<AppResult<Vec<GridElement>>>()?;
-                        vec![("<h1> Movies </h1>", items)]
+                let series_ids: Vec<u64> = conn
+                    .prepare(
+                        "SELECT collection.id FROM series, collection, collection_contains
+                            WHERE collection.reference = series.id
+                            AND collection.type = ?1
+                            AND collection_contains.collection_id = ?2
+                            AND collection_contains.type = ?3
+                            AND collection_contains.reference = collection.id",
+                    )?
+                    .query_map_get(params![CollectionType::Series, id, TableId::Collection])?
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                match series_ids.len() {
+                    0 => {}
+                    1 => {
+                        let season_load = inner(conn, series_ids[0], Preview::Series)?;
+                        out.extend(season_load);
                     }
-                };
-                out.extend(movies);
-
-                let series = match series.len() {
-                    0 => Vec::new(),
-                    1 => inner(conn, series[0].0, Preview::Series)?,
                     2.. => {
-                        let items = series
-                            .into_iter()
-                            .map(|(series_id, title)| GridElement {
-                                title,
-                                redirect_entire: frontend_redirect(
-                                    &format!("/preview/Series/{series_id}"),
-                                    HXTarget::Content,
-                                ),
-                                redirect_img: String::new(),
-                                redirect_title: String::new(),
-                            })
-                            .collect::<Vec<GridElement>>();
-                        vec![("<h1> Series </h1>", items)]
+                        out.push((
+                            "<h1> Series </h1>",
+                            LoadNext::new(format!("/library/Series/{id}"), 0, 20),
+                        ));
                     }
                 };
-                out.extend(series);
 
                 Ok(out)
             }
@@ -265,69 +240,16 @@ fn preview_categories(
                         )?;
                         inner(conn, season_id, Preview::Season)
                     }
-                    2.. => {
-                        let items = conn.prepare(
-                            "SELECT collection.id, season.title, season.season FROM season, collection_contains, collection
-                                WHERE collection_contains.collection_id = ?1
-                                AND collection_contains.type = ?2
-                                AND collection.type = ?3
-                                AND collection_contains.reference = collection.id
-                                AND collection.reference = season.id
-                                ORDER BY season.season ASC")?   
-                    .query_map_into(params![id, TableId::Collection, CollectionType::Season])?
-                    .collect::<Result<Vec<(u64, Option<String>, u64)>, _>>()?
-                    .into_iter()
-                    .map(|(season_id, title, season)| {
-                            let title = title.unwrap_or(format!("Season {season}"));
-                            GridElement {
-                                title,
-                                redirect_entire: frontend_redirect(
-                                    &format!("/preview/Season/{season_id}"),
-                                    HXTarget::Content,
-                                ),
-                                redirect_img: String::new(),
-                                redirect_title: String::new(),
-                            }
-                        }
-                    ).collect::<Vec<GridElement>>();
-                        Ok(vec![("<h2> Seasons </h2>", items)])
-                    }
+                    2.. => Ok(vec![(
+                        "<h2> Seasons </h2>",
+                        LoadNext::new(format!("/library/Season/{id}"), 0, 20),
+                    )]),
                 }
             }
-            Preview::Season => {
-                let items = conn.prepare(
-                    "SELECT episode.id, episode.title, episode.episode FROM episode, collection, collection_contains, content
-                    WHERE content.reference = episode.id
-                    AND content.type = ?4
-                    AND collection.type = ?1
-                    AND collection.id = collection_contains.collection_id
-                    AND collection_contains.collection_id = ?2
-                    AND collection_contains.type = ?3
-                    AND collection_contains.reference = content.id
-                    ORDER BY episode.episode ASC")?
-                .query_map_into(params![CollectionType::Season, id, TableId::Content, ContentType::Episode])?
-                .collect::<Result<Vec<(u64, String, u64,)>, _>>()?
-                .into_iter()
-                .map(|(data_id, name, episode)| {
-                    let name = format!("{name} - Episode {episode}");
-                    let video_id = resolve_video(conn, data_id, ContentType::Episode)?;
-                    Ok(GridElement {
-                        title: name,
-                        redirect_entire: String::new(),
-                        redirect_img: frontend_redirect_explicit(
-                            &format!("/video/{video_id}"),
-                            HXTarget::All,
-                            None,
-                        ),
-                        redirect_title: frontend_redirect(
-                            &format!("/preview/Episode/{data_id}"),
-                            HXTarget::Content,
-                        ),
-                    })
-                })
-                .collect::<Result<Vec<GridElement>, AppError>>()?;
-                Ok(vec![("<h2> Episodes </h2>", items)])
-            }
+            Preview::Season => Ok(vec![(
+                "<h2> Episodes </h2>",
+                LoadNext::new(format!("/library/Episode/{id}"), 0, 20),
+            )]),
             Preview::Episode | Preview::Movie => Ok(Vec::new()),
         }
     }
@@ -336,12 +258,205 @@ fn preview_categories(
     inner(&conn, id, prev)
 }
 
-/*
-<dialog open="" style="
-    background-color: transparent;
-    border-color: transparent;
-    right: 0px;
-    margin-right: 0;
-    position: fixed;
-"> <audio src="/content/13" autoplay="" controls="" loop=""> </audio></dialog>
-*/
+async fn get_preview_items(
+    State(db): State<Database>,
+    Path((returned, id)): Path<(Preview, u64)>,
+    Query(pagination): Query<Pagination>,
+) -> AppResult<impl IntoResponse> {
+    let conn = db.get()?;
+
+    let elements = match returned {
+        Preview::Franchise => {
+            let franchises = conn
+                .prepare(
+                    "SELECT collection.id, franchise.title FROM collection, franchise
+                        WHERE collection.reference = franchise.id 
+                        AND collection.type = ?1
+                        ORDER BY franchise.title ASC
+                        LIMIT ?2 OFFSET ?3",
+                )?
+                .query_map_into(params![
+                    CollectionType::Franchise,
+                    pagination.per_page,
+                    pagination.page * pagination.per_page
+                ])
+                .optional()?
+                .map_or_else(
+                    || Ok(Vec::new()),
+                    |rows| rows.collect::<Result<Vec<(u64, String)>, _>>(),
+                )?
+                .into_iter()
+                .map(|(id, title)| GridElement {
+                    title: title.clone(),
+                    redirect_entire: frontend_redirect(
+                        &format!("/preview/Franchise/{id}"),
+                        HXTarget::Content,
+                    ),
+                    redirect_img: String::new(),
+                    redirect_title: String::new(),
+                })
+                .collect::<Vec<_>>();
+
+            Ok(franchises)
+        }
+        Preview::Movie => {
+            let items = conn
+                .prepare(
+                    "SELECT movie.title, movie.id FROM movie, collection_contains, content, collection
+                        WHERE content.reference = movie.id
+                        AND content.type = ?1
+                        AND collection.type = ?2
+                        AND collection_contains.collection_id = collection.id
+                        AND collection_contains.collection_id = ?3
+                        AND collection_contains.type = ?4
+                        AND collection_contains.reference = content.id
+                        ORDER BY movie.title ASC
+                        LIMIT ?5 OFFSET ?6",
+                )?
+                .query_map_into::<(String, u64)>(params![
+                    ContentType::Movie,
+                    CollectionType::Franchise,
+                    id,
+                    TableId::Content,
+                    pagination.per_page,
+                    pagination.page * pagination.per_page
+                ])
+                .optional()?
+                .map_or_else(|| Ok(Vec::new()), |rows| rows.collect())?
+                .into_iter()
+                .map(|(title, movie_id)| {
+                    let video_id = resolve_video(&conn, movie_id, ContentType::Movie)?;
+                    Ok(GridElement {
+                        title,
+                        redirect_entire: String::new(),
+                        redirect_img: frontend_redirect_explicit(
+                            &format!("/video/{video_id}"),
+                            HXTarget::All,
+                            None,
+                        ),
+                        redirect_title: frontend_redirect(
+                            &format!("/preview/Movie/{movie_id}"),
+                            HXTarget::Content,
+                        ),
+                    })
+                })
+                .collect::<AppResult<Vec<_>>>()?;
+
+            Ok::<_, AppError>(items)
+        }
+        Preview::Series => {
+            let items = conn.prepare("SELECT collection.id, series.title FROM series, collection, collection_contains
+                        WHERE collection.reference = series.id
+                        AND collection.type = ?1
+                        AND collection_contains.collection_id = ?2
+                        AND collection_contains.type = ?3
+                        AND collection_contains.reference = collection.id
+                        ORDER BY series.title ASC
+                        LIMIT ?4 OFFSET ?5")?
+            .query_map_into(params![CollectionType::Series, id, TableId::Collection, pagination.per_page, pagination.page * pagination.per_page])?
+            .collect::<Result<Vec<(u64, String)>, _>>()?
+            .into_iter()
+            .map(|(series_id, title)| {
+                GridElement {
+                    title,
+                    redirect_entire: frontend_redirect(
+                        &format!("/preview/Series/{series_id}"),
+                        HXTarget::Content,
+                    ),
+                    redirect_img: String::new(),
+                    redirect_title: String::new(),
+                }
+            })
+            .collect::<Vec<GridElement>>();
+
+            Ok(items)
+        }
+        Preview::Season => {
+            let items = conn.prepare(
+                        "SELECT collection.id, season.title FROM season, collection_contains, collection
+                            WHERE collection_contains.collection_id = ?1
+                            AND collection_contains.type = ?2
+                            AND collection.type = ?3
+                            AND collection_contains.reference = collection.id
+                            AND collection.reference = season.id
+                            ORDER BY season.season ASC
+                            LIMIT ?4 OFFSET ?5")?
+                .query_map_into::<(u64, String)>(params![id, TableId::Collection, CollectionType::Season, pagination.per_page, pagination.page * pagination.per_page])
+                .optional()?
+                .map_or_else(|| Ok(Vec::new()), |rows| rows.collect())?
+                .into_iter()
+                .map(|(season_id, title)| {
+                        GridElement {
+                            title,
+                            redirect_entire: frontend_redirect(
+                                &format!("/preview/Season/{season_id}"),
+                                HXTarget::Content,
+                            ),
+                            redirect_img: String::new(),
+                            redirect_title: String::new(),
+                        }
+                    }
+                ).collect::<Vec<GridElement>>();
+            Ok(items)
+        }
+        Preview::Episode => {
+            let items = conn.prepare(
+                "SELECT episode.id, episode.title, episode.episode FROM episode, collection, collection_contains, content
+                WHERE content.reference = episode.id
+                AND content.type = ?4
+                AND collection.type = ?1
+                AND collection.id = collection_contains.collection_id
+                AND collection_contains.collection_id = ?2
+                AND collection_contains.type = ?3
+                AND collection_contains.reference = content.id
+                ORDER BY episode.episode ASC
+                LIMIT ?5 OFFSET ?6")?
+            .query_map_into::<(u64, String, u64)>(params![CollectionType::Season, id, TableId::Content, ContentType::Episode, pagination.per_page, pagination.page * pagination.per_page])
+            .optional()?
+            .map_or_else(|| Ok(Vec::new()), |rows| rows.collect())?
+            .into_iter()
+            .map(|(data_id, name, episode)| {
+                let name = format!("{name} - Episode {episode}");
+                let video_id = resolve_video(&conn, data_id, ContentType::Episode)?;
+                Ok(GridElement {
+                    title: name,
+                    redirect_entire: String::new(),
+                    redirect_img: frontend_redirect_explicit(
+                        &format!("/video/{video_id}"),
+                        HXTarget::All,
+                        None,
+                    ),
+                    redirect_title: frontend_redirect(
+                        &format!("/preview/Episode/{data_id}"),
+                        HXTarget::Content,
+                    ),
+                })
+            })
+            .collect::<AppResult<Vec<_>>>()?;
+            Ok(items)
+        }
+    }?;
+
+    let load_next = if elements.len() < pagination.per_page as usize {
+        None
+    } else {
+        let preview = match returned {
+            Preview::Franchise => "Franchise",
+            Preview::Movie => "Movie",
+            Preview::Series => "Series",
+            Preview::Season => "Season",
+            Preview::Episode => "Episode",
+        };
+
+        Some(LoadNext::new(
+            format!("/library/{preview}/{id}"),
+            pagination.page + 1,
+            pagination.per_page,
+        ))
+    };
+
+    Ok(PaginationResponse {
+        elements,
+        load_next,
+    })
+}

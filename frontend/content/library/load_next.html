@@ -1,0 +1,3 @@
+<div id={{random}} hx-on::after-request="document.getElementById('{{random}}').remove();"
+    hx-get="{{route}}?page={{page}}&per_page={{per_page}}" hx-trigger="intersect once" hx-swap="afterend">
+</div>

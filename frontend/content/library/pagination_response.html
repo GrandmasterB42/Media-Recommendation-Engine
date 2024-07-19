@@ -1,0 +1,7 @@
+{% for element in elements %}
+{{element|safe}}
+{% endfor %}
+
+{% if let Some(load_next) = load_next %}
+{{load_next|safe}}
+{% endif %}

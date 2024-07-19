@@ -2,12 +2,10 @@
     <link href="/styles/preview.css" rel="stylesheet" />
     <link href="/styles/library.css" rel="stylesheet" />
     {{top|safe}}
-    {% for (category, items) in categories %}
+    {% for (category, load_next) in categories %}
     {{category|safe}}
     <div class="gridcontainer">
-        {% for item in items %}
-        {{item|safe}}
-        {% endfor %}
+        {{load_next|safe}}
     </div>
     {% endfor %}
 </div>

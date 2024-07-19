@@ -3,8 +3,6 @@
     <div class="session_heading" hx-ext="sse" sse-connect="/sessions" sse-swap="message"></div>
 
     <div class="gridcontainer">
-        {% for franchise in franchises %}
-        {{franchise|safe}}
-        {% endfor %}
+        {{load_next|safe}}
     </div>
 </div>

@@ -136,9 +136,36 @@ impl AsDisplay for LocationEntry {
 }
 
 #[derive(Template)]
-#[template(path = "../frontend/content/library.html")]
+#[template(path = "../frontend/content/library/library.html")]
 pub struct Library {
-    pub franchises: Vec<GridElement>,
+    pub load_next: LoadNext,
+}
+
+#[derive(Template)]
+#[template(path = "../frontend/content/library/load_next.html")]
+pub struct LoadNext {
+    pub route: String,
+    pub page: u64,
+    pub per_page: u64,
+    random: u32,
+}
+
+impl LoadNext {
+    pub fn new(route: String, page: u64, per_page: u64) -> Self {
+        Self {
+            route,
+            page,
+            per_page,
+            random: super::pseudo_random(),
+        }
+    }
+}
+
+#[derive(Template)]
+#[template(path = "../frontend/content/library/pagination_response.html")]
+pub struct PaginationResponse<T: Template> {
+    pub elements: Vec<T>,
+    pub load_next: Option<LoadNext>,
 }
 
 #[derive(Template)]
@@ -146,21 +173,21 @@ pub struct Library {
 pub struct ExploreTemplate;
 
 #[derive(Template)]
-#[template(path = "../frontend/content/preview.html")]
+#[template(path = "../frontend/content/library/preview.html")]
 pub struct PreviewTemplate<'a> {
     pub top: LargeImage,
-    pub categories: Vec<(&'a str, Vec<GridElement>)>,
+    pub categories: Vec<(&'a str, LoadNext)>,
 }
 
 #[derive(Template)]
-#[template(path = "../frontend/content/large_preview_image.html")]
+#[template(path = "../frontend/content/library/large_preview_image.html")]
 pub struct LargeImage {
     pub title: String,
     pub image_interaction: String,
 }
 
 #[derive(Template)]
-#[template(path = "../frontend/content/grid_element.html")]
+#[template(path = "../frontend/content/library/grid_element.html")]
 pub struct GridElement {
     pub title: String,
     pub redirect_entire: String,
