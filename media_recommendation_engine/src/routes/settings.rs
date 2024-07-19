@@ -469,7 +469,7 @@ async fn add_location(
         params![&location.path, recurse],
     )?;
 
-    trigger.notify_one();
+    trigger.trigger();
 
     Ok(SwapIn {
         swap_id: "location_list",
@@ -509,7 +509,7 @@ async fn remove_location(
             .into_response());
     }
 
-    trigger.notify_one();
+    trigger.trigger();
 
     Ok(().into_response())
 }
@@ -551,7 +551,7 @@ async fn recurse_location(
             .into_response());
     }
 
-    trigger.notify_one();
+    trigger.trigger();
 
     Ok(().into_response())
 }

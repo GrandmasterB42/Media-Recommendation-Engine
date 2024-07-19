@@ -1,7 +1,6 @@
 use std::{
     error::Error,
     fmt::Display,
-    ops::Deref,
     sync::{Arc, Mutex},
 };
 
@@ -32,7 +31,7 @@ impl AppState {
         let (shutdown, restart_receiver) = Shutdown::new();
         let streaming_sessions = StreamingSessions::new(shutdown.clone());
         let serversettings = ServerSettings::new(shutdown.clone(), database.clone(), port).await;
-        let indexing_trigger = IndexingTrigger(Arc::new(Notify::new()));
+        let indexing_trigger = IndexingTrigger::new();
         (
             Self {
                 database,
@@ -79,11 +78,17 @@ impl FromRef<AppState> for IndexingTrigger {
 #[derive(Clone)]
 pub struct IndexingTrigger(Arc<Notify>);
 
-impl Deref for IndexingTrigger {
-    type Target = Notify;
+impl IndexingTrigger {
+    fn new() -> Self {
+        Self(Arc::new(Notify::new()))
+    }
 
-    fn deref(&self) -> &Self::Target {
-        &self.0
+    pub async fn notified(&self) {
+        self.0.notified().await
+    }
+
+    pub fn trigger(&self) {
+        self.0.notify_one()
     }
 }
 
