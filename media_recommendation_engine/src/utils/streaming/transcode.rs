@@ -217,9 +217,9 @@ impl MediaCache {
                 "-loglevel",
                 FFMPEG_LOG_LEVEL,
                 "-ss",
-                &format!("{:.6}", segmentation.start_time),
+                &format!("{}", segmentation.start_time),
                 "-t",
-                &format!("{:.6}", segmentation.duration),
+                &format!("{}", segmentation.duration),
                 "-copyts",
                 "-i",
                 self.media_source.lock().await.to_str().unwrap(),
@@ -231,6 +231,8 @@ impl MediaCache {
                 "segment",
                 "-segment_times",
                 &segmentation.segment_times,
+                "-force_key_frames",
+                &segmentation.keyframe_times,
                 "-segment_start_number",
                 &format!("{}", index.checked_sub(2).unwrap_or_default()),
                 //"-segment_time",
@@ -239,6 +241,8 @@ impl MediaCache {
                 //&format!("expr:gte(t,n_forced*{})", SEGMENT_DURATION as u64),
                 //"-break_non_keyframes",
                 //"1",
+                "-segment_time_delta",
+                "0.5",
                 "-hls_flags",
                 "independent_segments",
                 "-segment_format",
@@ -294,6 +298,7 @@ struct Segmentation {
     start_time: f64,
     duration: f64,
     segment_times: String,
+    keyframe_times: String,
 }
 
 struct Playlist {
@@ -326,6 +331,8 @@ impl Playlist {
                 //&format!("expr:gte(t,n_forced*{})", SEGMENT_DURATION as u64),
                 //"-break_non_keyframes",
                 //"1",
+                "-segment_time_delta",
+                "0.5",
                 "-hls_flags",
                 "independent_segments",
                 "-hls_segment_type",
@@ -392,19 +399,35 @@ impl Playlist {
     fn range_for_segment(&self, index: u64) -> Segmentation {
         if index == 0 {
             let segments = (
-                self.segments.first().copied().unwrap_or_default(),
-                self.segments.get(1).copied().unwrap_or_default(),
-                self.segments.get(2).copied().unwrap_or_default(),
+                self.segments
+                    .get(index as usize)
+                    .copied()
+                    .unwrap_or_default(),
+                self.segments
+                    .get((index + 1) as usize)
+                    .copied()
+                    .unwrap_or_default(),
+                self.segments
+                    .get((index + 2) as usize)
+                    .copied()
+                    .unwrap_or_default(),
             );
 
             Segmentation {
-                start_time: 0.0,
+                start_time: segments.0.start_time,
                 duration: segments.0.duration + segments.1.duration + segments.2.duration,
                 segment_times: format!(
-                    "{:.6},{:.6},{:.6}",
+                    "{},{},{}",
                     segments.0.duration,
                     segments.0.duration + segments.1.duration,
                     segments.0.duration + segments.1.duration + segments.2.duration
+                ),
+                keyframe_times: format!(
+                    "{},{},{},{}",
+                    segments.0.start_time,
+                    segments.1.start_time,
+                    segments.2.start_time,
+                    segments.2.start_time + segments.2.duration
                 ),
             }
         } else if index == 1 {
@@ -431,7 +454,7 @@ impl Playlist {
                     + segments.2.duration
                     + segments.3.duration,
                 segment_times: format!(
-                    "{:.6},{:.6},{:.6}, {:.6}",
+                    "{},{},{},{}",
                     segments.0.duration,
                     segments.0.duration + segments.1.duration,
                     segments.0.duration + segments.1.duration + segments.2.duration,
@@ -439,6 +462,14 @@ impl Playlist {
                         + segments.1.duration
                         + segments.2.duration
                         + segments.3.duration
+                ),
+                keyframe_times: format!(
+                    "{},{},{},{},{}",
+                    segments.0.start_time,
+                    segments.1.start_time,
+                    segments.2.start_time,
+                    segments.3.start_time,
+                    segments.3.start_time + segments.3.duration
                 ),
             }
         } else {
@@ -473,7 +504,7 @@ impl Playlist {
                     + segments.3.duration
                     + segments.4.duration,
                 segment_times: format!(
-                    "{:.6},{:.6},{:.6},{:.6},{:.6}",
+                    "{},{},{},{},{}",
                     segments.0.duration,
                     segments.0.duration + segments.1.duration,
                     segments.0.duration + segments.1.duration + segments.2.duration,
@@ -486,6 +517,15 @@ impl Playlist {
                         + segments.2.duration
                         + segments.3.duration
                         + segments.4.duration
+                ),
+                keyframe_times: format!(
+                    "{},{},{},{},{},{}",
+                    segments.0.start_time,
+                    segments.1.start_time,
+                    segments.2.start_time,
+                    segments.3.start_time,
+                    segments.4.start_time,
+                    segments.4.start_time + segments.4.duration
                 ),
             }
         }
