@@ -26,7 +26,7 @@ const FFMPEG_LOG_LEVEL: &str = if cfg!(debug_assertions) {
 
 pub enum MediaRequest {
     PlayList,
-    Segment(u64),
+    Segment(usize),
 }
 pub struct TranscodedStream {
     media_source: Mutex<PathBuf>,
@@ -52,7 +52,6 @@ impl TranscodedStream {
     }
 
     pub async fn respond(&self, request: MediaRequest) -> AppResult<impl IntoResponse> {
-        // TODO: set repsond header type=
         match request {
             MediaRequest::PlayList => {
                 let playlist = self
@@ -94,7 +93,7 @@ impl TranscodedStream {
 
 struct MediaSegment {
     pub data: Vec<u8>,
-    index: u64,
+    index: usize,
 }
 
 struct MediaCache {
@@ -148,7 +147,7 @@ impl MediaCache {
     }
 
     /// Returns None if the segment is out of bounds or an error occured
-    async fn request_segment(&self, index: u64) -> Option<Vec<u8>> {
+    async fn request_segment(&self, index: usize) -> Option<Vec<u8>> {
         let segment = self
             .cache
             .read()
@@ -197,7 +196,8 @@ impl MediaCache {
         }
     }
 
-    async fn generate_segments_after(&self, index: u64) -> AppResult<Vec<MediaSegment>> {
+    /// Expects a valid index
+    async fn generate_segments_after(&self, index: usize) -> AppResult<Vec<MediaSegment>> {
         // Generate one extra segment before and after to not have trouble with any artifacting
         let mut segments = Vec::new();
 
@@ -207,7 +207,8 @@ impl MediaCache {
             .playlist
             .read()
             .expect("This should never happen")
-            .range_for_segment(index);
+            .range_for_segment(index)
+            .expect("Only none with invalid index");
 
         // TODO: use the ffmpeg-next bindings instead of this
         // once that is done, the tokio process feature can be removed
@@ -217,9 +218,9 @@ impl MediaCache {
                 "-loglevel",
                 FFMPEG_LOG_LEVEL,
                 "-ss",
-                &format!("{}", segmentation.start_time),
+                &segmentation.start_time.to_string(),
                 "-t",
-                &format!("{}", segmentation.duration),
+                &segmentation.duration.to_string(),
                 "-copyts",
                 "-i",
                 self.media_source.lock().await.to_str().unwrap(),
@@ -234,13 +235,7 @@ impl MediaCache {
                 "-force_key_frames",
                 &segmentation.keyframe_times,
                 "-segment_start_number",
-                &format!("{}", index.checked_sub(2).unwrap_or_default()),
-                //"-segment_time",
-                //&format!("{}", SEGMENT_DURATION as u64),
-                //"-force_key_frames",
-                //&format!("expr:gte(t,n_forced*{})", SEGMENT_DURATION as u64),
-                //"-break_non_keyframes",
-                //"1",
+                &index.to_string(),
                 "-segment_time_delta",
                 "0.5",
                 "-hls_flags",
@@ -327,10 +322,6 @@ impl Playlist {
                 "vod",
                 "-hls_time",
                 &format!("{}", SEGMENT_DURATION as u64),
-                //"-force_key_frames",
-                //&format!("expr:gte(t,n_forced*{})", SEGMENT_DURATION as u64),
-                //"-break_non_keyframes",
-                //"1",
                 "-segment_time_delta",
                 "0.5",
                 "-hls_flags",
@@ -396,138 +387,22 @@ impl Playlist {
         })
     }
 
-    fn range_for_segment(&self, index: u64) -> Segmentation {
-        if index == 0 {
-            let segments = (
-                self.segments
-                    .get(index as usize)
-                    .copied()
-                    .unwrap_or_default(),
-                self.segments
-                    .get((index + 1) as usize)
-                    .copied()
-                    .unwrap_or_default(),
-                self.segments
-                    .get((index + 2) as usize)
-                    .copied()
-                    .unwrap_or_default(),
-            );
+    /// Return None if the index is out of bounds
+    fn range_for_segment(&self, index: usize) -> Option<Segmentation> {
+        let segment = self.segments.get(index)?;
 
-            Segmentation {
-                start_time: segments.0.start_time,
-                duration: segments.0.duration + segments.1.duration + segments.2.duration,
-                segment_times: format!(
-                    "{},{},{}",
-                    segments.0.duration,
-                    segments.0.duration + segments.1.duration,
-                    segments.0.duration + segments.1.duration + segments.2.duration
-                ),
-                keyframe_times: format!(
-                    "{},{},{},{}",
-                    segments.0.start_time,
-                    segments.1.start_time,
-                    segments.2.start_time,
-                    segments.2.start_time + segments.2.duration
-                ),
-            }
-        } else if index == 1 {
-            let segments = (
-                self.segments
-                    .get(index as usize - 1)
-                    .copied()
-                    .unwrap_or_default(),
-                self.segments
-                    .get(index as usize)
-                    .copied()
-                    .unwrap_or_default(),
-                self.segments
-                    .get(index as usize + 1)
-                    .copied()
-                    .unwrap_or_default(),
-                self.segments.get(2).copied().unwrap_or_default(),
-            );
+        let segment_times = format!("{}", segment.duration);
+        let keyframe_times = format!(
+            "{},{}",
+            segment.start_time,
+            segment.start_time + segment.duration
+        );
 
-            Segmentation {
-                start_time: segments.0.start_time,
-                duration: segments.0.duration
-                    + segments.1.duration
-                    + segments.2.duration
-                    + segments.3.duration,
-                segment_times: format!(
-                    "{},{},{},{}",
-                    segments.0.duration,
-                    segments.0.duration + segments.1.duration,
-                    segments.0.duration + segments.1.duration + segments.2.duration,
-                    segments.0.duration
-                        + segments.1.duration
-                        + segments.2.duration
-                        + segments.3.duration
-                ),
-                keyframe_times: format!(
-                    "{},{},{},{},{}",
-                    segments.0.start_time,
-                    segments.1.start_time,
-                    segments.2.start_time,
-                    segments.3.start_time,
-                    segments.3.start_time + segments.3.duration
-                ),
-            }
-        } else {
-            let segments = (
-                self.segments
-                    .get(index as usize - 2)
-                    .copied()
-                    .unwrap_or_default(),
-                self.segments
-                    .get(index as usize - 1)
-                    .copied()
-                    .unwrap_or_default(),
-                self.segments
-                    .get(index as usize)
-                    .copied()
-                    .unwrap_or_default(),
-                self.segments
-                    .get(index as usize + 1)
-                    .copied()
-                    .unwrap_or_default(),
-                self.segments
-                    .get(index as usize + 2)
-                    .copied()
-                    .unwrap_or_default(),
-            );
-
-            Segmentation {
-                start_time: segments.0.start_time,
-                duration: segments.0.duration
-                    + segments.1.duration
-                    + segments.2.duration
-                    + segments.3.duration
-                    + segments.4.duration,
-                segment_times: format!(
-                    "{},{},{},{},{}",
-                    segments.0.duration,
-                    segments.0.duration + segments.1.duration,
-                    segments.0.duration + segments.1.duration + segments.2.duration,
-                    segments.0.duration
-                        + segments.1.duration
-                        + segments.2.duration
-                        + segments.3.duration,
-                    segments.0.duration
-                        + segments.1.duration
-                        + segments.2.duration
-                        + segments.3.duration
-                        + segments.4.duration
-                ),
-                keyframe_times: format!(
-                    "{},{},{},{},{},{}",
-                    segments.0.start_time,
-                    segments.1.start_time,
-                    segments.2.start_time,
-                    segments.3.start_time,
-                    segments.4.start_time,
-                    segments.4.start_time + segments.4.duration
-                ),
-            }
-        }
+        Some(Segmentation {
+            start_time: segment.start_time,
+            duration: segment.duration,
+            segment_times,
+            keyframe_times,
+        })
     }
 }

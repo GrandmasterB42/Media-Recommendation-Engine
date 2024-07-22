@@ -43,7 +43,7 @@ async fn content_playlist(
         .parse()
         .with_context(|| "failed to parse session id from content token")?;
 
-    let segment_id: Option<u64> = seperated.1.parse().ok();
+    let segment_id: Option<usize> = seperated.1.parse().ok();
 
     let media_request = if let Some(segment_id) = segment_id {
         MediaRequest::Segment(segment_id)
