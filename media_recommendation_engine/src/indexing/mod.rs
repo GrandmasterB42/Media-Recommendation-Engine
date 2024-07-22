@@ -146,6 +146,7 @@ fn indexing(db: &Database) -> AppResult<()> {
 
     trace!("Started Hashing");
     // Try to reassign unassigned content or just create new content entries
+    /*
     hashes.par_iter_mut().enumerate().for_each(|(i, entry)| {
         trace!("Hashing {:?}", no_content[i].1);
         *entry = no_content[i]
@@ -154,6 +155,7 @@ fn indexing(db: &Database) -> AppResult<()> {
             .log_err_with_msg(&format!("failed to hash file: {:?}", no_content[i].1))
             .unwrap_or_default();
     });
+    */
 
     trace!("Started Classifying");
     for (_, path) in &no_content {

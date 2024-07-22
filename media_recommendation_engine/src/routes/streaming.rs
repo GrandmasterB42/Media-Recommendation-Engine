@@ -1,11 +1,11 @@
+use anyhow::Context;
 use askama::Template;
 use axum::{
-    body::Body,
     extract::{
         ws::{Message, WebSocket},
         Path, State, WebSocketUpgrade,
     },
-    http::{Request, StatusCode},
+    http::StatusCode,
     response::{IntoResponse, Redirect},
     routing::get,
     Router,
@@ -13,9 +13,9 @@ use axum::{
 
 use crate::{
     database::Database,
-    state::{AppResult, AppState, Shutdown},
+    state::{AppError, AppResult, AppState, Shutdown},
     utils::{
-        streaming::{Session, StreamingSessions},
+        streaming::{MediaRequest, Session, StreamingSessions},
         templates::{Notification, Video},
         AuthSession, HandleErr,
     },
@@ -23,25 +23,41 @@ use crate::{
 
 pub fn streaming() -> Router<AppState> {
     Router::new()
-        .route("/content/:id", get(content))
+        .route("/content/:id", get(content_playlist))
         .route("/:id", get(new_session))
         .route("/session/:id", get(session))
         .route("/session/ws/:id", get(ws_session))
 }
 
-async fn content(
-    Path(id): Path<u32>,
+async fn content_playlist(
+    Path(content_token): Path<String>,
     State(sessions): State<StreamingSessions>,
     State(shutdown): State<Shutdown>,
-    request: Request<Body>,
-) -> Result<impl IntoResponse, impl IntoResponse> {
-    let Some(session) = sessions.get(&id).await else {
-        return Err((StatusCode::FORBIDDEN).into_response());
+) -> AppResult<impl IntoResponse> {
+    let seperated = content_token
+        .split_once('.')
+        .unwrap_or((&content_token, ""));
+
+    let session_id = seperated
+        .0
+        .parse()
+        .with_context(|| "failed to parse session id from content token")?;
+
+    let segment_id: Option<u64> = seperated.1.parse().ok();
+
+    let media_request = if let Some(segment_id) = segment_id {
+        MediaRequest::Segment(segment_id)
+    } else {
+        MediaRequest::PlayList
+    };
+
+    let Some(session) = sessions.get(&session_id).await else {
+        return Err(AppError::Status(StatusCode::FORBIDDEN));
     };
 
     tokio::select! {
-        resp = session.stream(request) => Ok(resp),
-        _  = shutdown.cancelled() => Err(StatusCode::REQUEST_TIMEOUT.into_response())
+        resp = session.stream(media_request) => Ok(resp),
+        _  = shutdown.cancelled() => Err(AppError::Status(StatusCode::REQUEST_TIMEOUT))
     }
 }
 

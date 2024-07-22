@@ -8,6 +8,7 @@ database/database.sqlite-shm
 database/database.sqlite-wal
 
 mreconfig.toml
+/tmp
 
 ffmpeg/*
 !/ffmpeg/Note

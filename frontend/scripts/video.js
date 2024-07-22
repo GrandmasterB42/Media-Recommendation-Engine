@@ -6,6 +6,14 @@ temp_video.replaceWith(temp_video.cloneNode(true));
 const video = document.getElementById("currentvideo");
 const videocontainer = document.querySelector(".video-container");
 
+var global_src = video.src;
+
+if (Hls.isSupported()) {
+    var hls = new Hls();
+    hls.loadSource(video.src);
+    hls.attachMedia(video);
+}
+
 document.body.addEventListener("htmx:wsBeforeMessage", (event) => {
     try {
         let data = JSON.parse(event.detail.message);
@@ -331,10 +339,17 @@ function reload() {
     video.pause();
     video.currentTime = 0;
 
-    let src = video.src;
+    let src = global_src;
     let numbers = src.match(/\d+$/);
     let invalidation_num = parseInt(numbers[0], 10);
-    video.src = src.replace(/\d+$/, invalidation_num + 1);
+    global_src = src.replace(/\d+$/, invalidation_num + 1);
+    video.src = global_src;
+
+    if (Hls.isSupported()) {
+        var hls = new Hls();
+        hls.loadSource(video.src);
+        hls.attachMedia(video);
+    }
 
     let popup = document.querySelector(".popup");
     popup.parentNode.removeChild(popup);// TODO: Make this failing not matter
