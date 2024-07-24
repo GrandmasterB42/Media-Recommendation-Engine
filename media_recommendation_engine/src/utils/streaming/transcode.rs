@@ -16,7 +16,7 @@ use axum::{http::StatusCode, response::IntoResponse};
 use tracing::{trace, warn};
 
 const SEGMENT_DURATION: f64 = 10.0; // In seconds
-const MAX_CACHED_SEGMENTS: usize = 32;
+const MAX_CACHED_SEGMENTS: usize = 16;
 
 const FFMPEG_LOG_LEVEL: &str = if cfg!(debug_assertions) {
     "warning"
@@ -28,6 +28,7 @@ pub enum MediaRequest {
     PlayList,
     Segment(usize),
 }
+
 pub struct TranscodedStream {
     media_source: Mutex<PathBuf>,
     media_cache: MediaCache,
@@ -212,6 +213,7 @@ impl MediaCache {
 
         // TODO: use the ffmpeg-next bindings instead of this
         // once that is done, the tokio process feature can be removed
+        // Some arguments might not be necessary, more testing is needed
         let transcode_status = Command::new("ffmpeg")
             .current_dir(&self.temp_directory)
             .args([
@@ -235,9 +237,9 @@ impl MediaCache {
                 "-force_key_frames",
                 &segmentation.keyframe_times,
                 "-segment_start_number",
-                &index.to_string(),
+                &segmentation.start_index.to_string(),
                 "-segment_time_delta",
-                "0.5",
+                "0.25",
                 "-hls_flags",
                 "independent_segments",
                 "-segment_format",
@@ -290,6 +292,7 @@ struct Segment {
 }
 
 struct Segmentation {
+    start_index: usize,
     start_time: f64,
     duration: f64,
     segment_times: String,
@@ -317,21 +320,23 @@ impl Playlist {
                 "-c",
                 "copy",
                 "-f",
-                "hls",
+                "segment",
                 "-hls_playlist_type",
                 "vod",
-                "-hls_time",
+                "-segment_time",
                 &format!("{}", SEGMENT_DURATION as u64),
                 "-segment_time_delta",
-                "0.5",
+                "0.25",
                 "-hls_flags",
                 "independent_segments",
                 "-hls_segment_type",
                 "mpegts",
-                "-hls_segment_filename",
-                &format!("{session_id}.%d"),
-                "-y",
+                "-segment_list",
                 "playlist.m3u8",
+                "-segment_list_type",
+                "m3u8",
+                "-y",
+                &format!("{session_id}.%d.ts"),
             ])
             .spawn()
             .with_context(|| "Failed to spawn ffmpeg")?
@@ -345,7 +350,7 @@ impl Playlist {
 
         let file_repr = fs::read_to_string(temp_dir.join("playlist.m3u8")).with_context(|| {
             format!(
-                "failed to read playlist from tempt directory for {}",
+                "failed to read playlist from temp directory for {}",
                 session_id
             )
         })?;
@@ -395,10 +400,11 @@ impl Playlist {
         let keyframe_times = format!(
             "{},{}",
             segment.start_time,
-            segment.start_time + segment.duration
+            segment.start_time + segment.duration,
         );
 
         Some(Segmentation {
+            start_index: index,
             start_time: segment.start_time,
             duration: segment.duration,
             segment_times,
