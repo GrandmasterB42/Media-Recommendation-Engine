@@ -16,7 +16,8 @@ use axum::{http::StatusCode, response::IntoResponse};
 use tracing::{trace, warn};
 
 const SEGMENT_DURATION: f64 = 10.0; // In seconds
-const MAX_CACHED_SEGMENTS: usize = 16;
+const MAX_CACHED_SEGMENTS: usize = 32;
+const PRECOMPUTE_SEGMENTS: usize = 8;
 
 const FFMPEG_LOG_LEVEL: &str = if cfg!(debug_assertions) {
     "warning"
@@ -158,43 +159,41 @@ impl MediaCache {
             .map(|segment| segment.data.clone());
 
         if let Some(segment) = segment {
-            Some(segment)
-        } else {
-            // Check for out of bounds index
-            if (index as f64 * SEGMENT_DURATION) >= *self.duration.lock().await {
-                return None;
-            }
-
-            let Some(segments) = self.generate_segments_after(index).await.log_err() else {
-                let source = self.media_source.lock().await;
-                warn!("Failed to generate segments after index {index} for {source:?}");
-                return None;
-            };
-
-            let mut cache = self.cache.write().expect("This should never happen");
-
-            // Caching logic
-            {
-                let not_cached = segments
-                    .into_iter()
-                    .filter(|segment| {
-                        let already_cached =
-                            cache.iter().any(|cached| cached.index == segment.index);
-                        !already_cached
-                    })
-                    .collect::<Vec<_>>();
-                cache.extend(not_cached);
-
-                let overflow_items = cache
-                    .len()
-                    .checked_sub(MAX_CACHED_SEGMENTS)
-                    .unwrap_or_default();
-                cache.drain(0..overflow_items);
-            }
-
-            let segment = cache.iter().find(|segment| segment.index == index).unwrap();
-            Some(segment.data.clone())
+            return Some(segment);
         }
+        // Check for out of bounds index
+        if (index as f64 * SEGMENT_DURATION) >= *self.duration.lock().await {
+            return None;
+        }
+
+        let Some(segments) = self.generate_segments_after(index).await.log_err() else {
+            let source = self.media_source.lock().await;
+            warn!("Failed to generate segments after index {index} for {source:?}");
+            return None;
+        };
+
+        let mut cache = self.cache.write().expect("This should never happen");
+
+        // Caching logic
+        {
+            let not_cached = segments
+                .into_iter()
+                .filter(|segment| {
+                    let already_cached = cache.iter().any(|cached| cached.index == segment.index);
+                    !already_cached
+                })
+                .collect::<Vec<_>>();
+            cache.extend(not_cached);
+
+            let overflow_items = cache
+                .len()
+                .checked_sub(MAX_CACHED_SEGMENTS)
+                .unwrap_or_default();
+            cache.drain(0..overflow_items);
+        }
+
+        let segment = cache.iter().find(|segment| segment.index == index).unwrap();
+        Some(segment.data.clone())
     }
 
     /// Expects a valid index
@@ -202,7 +201,7 @@ impl MediaCache {
         // Generate one extra segment before and after to not have trouble with any artifacting
         let mut segments = Vec::new();
 
-        trace!("Generating segment {index}");
+        trace!("Processing Request for segment {index}");
 
         let segmentation = self
             .playlist
@@ -257,14 +256,16 @@ impl MediaCache {
             bail!("Failed to transcode segments");
         }
 
-        let segment_path = self.temp_directory.join(format!("{index}.ts"));
+        for index in index..(index + PRECOMPUTE_SEGMENTS) {
+            let segment_path = self.temp_directory.join(format!("{index}.ts"));
+            let Ok(data) = fs::read(&segment_path) else {
+                break;
+            };
 
-        let data = fs::read(&segment_path)
-            .with_context(|| format!("failed to read transcoded segment from {segment_path:?}"))?;
+            tracing::trace!("Generated segment {index}");
 
-        tracing::trace!("Generated segment {index}");
-
-        segments.push(MediaSegment { data, index });
+            segments.push(MediaSegment { data, index });
+        }
 
         for file in fs::read_dir(&self.temp_directory)
             .with_context(|| "Failed to read temp directory for deletion")?
@@ -394,19 +395,38 @@ impl Playlist {
 
     /// Return None if the index is out of bounds
     fn range_for_segment(&self, index: usize) -> Option<Segmentation> {
-        let segment = self.segments.get(index)?;
+        let mut start_time = -1.0;
+        let mut duration = 0.0;
+        let mut segment_times = String::new();
+        let mut keyframe_times = String::new();
 
-        let segment_times = format!("{}", segment.duration);
-        let keyframe_times = format!(
-            "{},{}",
-            segment.start_time,
-            segment.start_time + segment.duration,
-        );
+        let last_index = (index + PRECOMPUTE_SEGMENTS) - 1;
+        for segment_index in index..=last_index {
+            let Some(segment) = self.segments.get(segment_index) else {
+                break;
+            };
+
+            if start_time == -1.0 {
+                start_time = segment.start_time;
+            }
+
+            segment_times.push_str(&format!("{},", duration + segment.duration));
+            keyframe_times.push_str(&format!("{},", segment.start_time));
+
+            duration += segment.duration;
+
+            if segment_index == last_index {
+                keyframe_times.push_str(&format!("{},", segment.start_time + segment.duration));
+            }
+        }
+
+        let segment_times = segment_times.trim_end_matches(',').to_string();
+        let keyframe_times = keyframe_times.trim_end_matches(',').to_string();
 
         Some(Segmentation {
             start_index: index,
-            start_time: segment.start_time,
-            duration: segment.duration,
+            start_time,
+            duration,
             segment_times,
             keyframe_times,
         })
