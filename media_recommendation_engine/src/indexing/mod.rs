@@ -9,7 +9,6 @@ use std::{
 };
 
 use classify::{ClassificationCategory, CollectionHint, Franchise, Movie, Season, Series};
-use rayon::iter::{IndexedParallelIterator, IntoParallelRefMutIterator, ParallelIterator};
 use rusqlite::{params, OptionalExtension};
 use tracing::{debug, info, span, trace, warn, Level};
 
@@ -147,8 +146,9 @@ fn indexing(db: &Database) -> AppResult<()> {
     let (mut hashes, mut classifications) = (vec![vec![]; len], Vec::with_capacity(len));
 
     trace!("Started Hashing");
+    // TODO: The hashes need to be computed differently (maybe concurrently or in parallel)
     // Try to reassign unassigned content or just create new content entries
-    hashes.par_iter_mut().enumerate().for_each(|(i, entry)| {
+    hashes.iter_mut().enumerate().for_each(|(i, entry)| {
         trace!("Hashing {:?}", no_content[i].1);
         *entry = no_content[i]
             .1
