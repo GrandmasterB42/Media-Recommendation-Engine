@@ -5,11 +5,10 @@ pub trait ParseUntil<D, O, E> {
     fn parse_until(&self, delimiter: D) -> Result<O, E>;
 }
 
-impl<'a, 'b, D, O, E> ParseUntil<D, O, E> for &'b str
+impl<D, O, E> ParseUntil<D, O, E> for &str
 where
-    D: Pattern<'a>,
+    D: Pattern,
     O: FromStr<Err = E>,
-    'b: 'a,
 {
     fn parse_until(&self, delimiter: D) -> Result<O, E> {
         self.split_once(delimiter).unwrap_or((self, "")).0.parse()
@@ -21,12 +20,11 @@ pub trait ParseBetween<D1, D2, O, E> {
     fn parse_between(&self, delimiter1: D1, delimiter2: D2) -> Result<O, E>;
 }
 
-impl<'a, 'b, D1, D2, O, E> ParseBetween<D1, D2, O, E> for &'b str
+impl<D1, D2, O, E> ParseBetween<D1, D2, O, E> for &str
 where
-    D1: Pattern<'a>,
-    D2: Pattern<'a>,
+    D1: Pattern,
+    D2: Pattern,
     O: FromStr<Err = E>,
-    'b: 'a,
 {
     fn parse_between(&self, delimiter1: D1, delimiter2: D2) -> Result<O, E> {
         self.split_once(delimiter1)
