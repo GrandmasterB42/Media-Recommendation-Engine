@@ -22,6 +22,9 @@ pub use settings::ServerSettings;
 
 pub mod streaming;
 
+mod watchstream;
+pub use watchstream::WatchStream;
+
 macro_rules! relative {
     ($path:expr) => {
         if cfg!(windows) {
