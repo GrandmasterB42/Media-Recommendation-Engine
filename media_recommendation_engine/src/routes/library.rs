@@ -13,7 +13,6 @@ use axum::{
 use futures_util::{Stream, StreamExt};
 use rusqlite::{params, OptionalExtension};
 use serde::Deserialize;
-use tokio_stream::wrappers::WatchStream;
 
 use crate::{
     database::{
@@ -28,7 +27,7 @@ use crate::{
         templates::{
             GridElement, LargeImage, Library, LoadNext, PaginationResponse, PreviewTemplate,
         },
-        HXTarget,
+        HXTarget, WatchStream,
     },
 };
 

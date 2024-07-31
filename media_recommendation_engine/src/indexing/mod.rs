@@ -9,8 +9,6 @@ use std::{
 };
 
 use classify::{ClassificationCategory, CollectionHint, Franchise, Movie, Season, Series};
-use itertools::Itertools;
-use rayon::iter::{IndexedParallelIterator, IntoParallelRefMutIterator, ParallelIterator};
 use rusqlite::{params, OptionalExtension};
 use tracing::{debug, info, span, trace, warn, Level};
 
@@ -57,9 +55,12 @@ fn indexing(db: &Database) -> AppResult<()> {
     let filesystem = conn
         .prepare("SELECT path, recurse FROM storage_locations")?
         .query_map_into::<(String, bool)>([])?
-        .map_ok(|(path, recurse)| scan_dir(Path::new(&path), recurse))
-        .flatten_ok()
-        .collect::<Result<HashSet<PathBuf>, _>>()?;
+        .filter_map(|res| {
+            res.log_warn()
+                .map(|(path, recurse)| scan_dir(Path::new(&path), recurse))
+        })
+        .flatten()
+        .collect::<HashSet<PathBuf>>();
 
     let tx = conn.transaction()?;
 
@@ -75,8 +76,8 @@ fn indexing(db: &Database) -> AppResult<()> {
     let (both, only_database): (Vec<_>, Vec<_>) = conn
         .prepare("SELECT id, path from data_file")?
         .query_map_into::<(u64, String)>([])?
-        .map_ok(|(id, path)| (id, PathBuf::from(path)))
-        .collect::<Result<Vec<_>, _>>()?
+        .filter_map(|res| res.log_warn().map(|(id, path)| (id, PathBuf::from(path))))
+        .collect::<Vec<_>>()
         .into_iter()
         .partition(|(_, path)| filesystem.contains(path));
 
@@ -145,9 +146,9 @@ fn indexing(db: &Database) -> AppResult<()> {
     let (mut hashes, mut classifications) = (vec![vec![]; len], Vec::with_capacity(len));
 
     trace!("Started Hashing");
+    // TODO: The hashes need to be computed differently (maybe concurrently or in parallel)
     // Try to reassign unassigned content or just create new content entries
-
-    hashes.par_iter_mut().enumerate().for_each(|(i, entry)| {
+    hashes.iter_mut().enumerate().for_each(|(i, entry)| {
         trace!("Hashing {:?}", no_content[i].1);
         *entry = no_content[i]
             .1
