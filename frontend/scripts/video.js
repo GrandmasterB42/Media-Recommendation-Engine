@@ -346,9 +346,7 @@ function reload() {
     video.src = global_src;
 
     if (Hls.isSupported()) {
-        var hls = new Hls();
         hls.loadSource(video.src);
-        hls.attachMedia(video);
     }
 
     let popup = document.querySelector(".popup");

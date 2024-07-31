@@ -13,7 +13,7 @@
     <link rel="stylesheet" href="/styles/notifications.css" />
     <link rel="stylesheet" href="/styles/popups.css" />
 
-    <video id="currentvideo" src="/video/content/{{id}}?invalidate=0" hx-on:click="togglePlay()">
+    <video id="currentvideo" src="/video/content/{{id}}.m3u8?invalidate=0" hx-on:click="togglePlay()">
     </video>
     <div class="video-controls theater">
         <div class="timeline-container" hx-on:mousemove="handleTimelineUpdate(event)"

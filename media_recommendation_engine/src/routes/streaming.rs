@@ -1,4 +1,3 @@
-use anyhow::Context;
 use askama::Template;
 use axum::{
     extract::{
@@ -34,27 +33,45 @@ async fn content_playlist(
     State(sessions): State<StreamingSessions>,
     State(shutdown): State<Shutdown>,
 ) -> AppResult<impl IntoResponse> {
-    let seperated = content_token
-        .split_once('.')
-        .unwrap_or((&content_token, ""));
+    let (session_id, media_request) = if content_token.ends_with(".m3u8") {
+        let content_token = content_token.trim_end_matches(".m3u8");
+        let mut seperated = content_token.split('.');
 
-    let session_id = seperated
-        .0
-        .parse()
-        .with_context(|| "failed to parse session id from content token")?;
+        let Some(Ok(session_id)) = seperated.next().map(str::parse) else {
+            return Err(AppError::Status(StatusCode::BAD_REQUEST));
+        };
 
-    let segment_id: Option<usize> = seperated
-        .1
-        .split_once('.')
-        .unwrap_or((seperated.1, ""))
-        .0
-        .parse()
-        .ok();
+        let media_request = if let Some(Ok(track_id)) = seperated.next().map(str::parse) {
+            MediaRequest::TrackPlaylist { index: track_id }
+        } else {
+            MediaRequest::MasterPlaylist
+        };
 
-    let media_request = if let Some(segment_id) = segment_id {
-        MediaRequest::Segment(segment_id)
+        (session_id, media_request)
+    } else if content_token.ends_with(".ts") {
+        let content_token = content_token.trim_end_matches(".ts");
+        let mut seperated = content_token.split('.');
+
+        let Some(Ok(session_id)) = seperated.next().map(str::parse) else {
+            return Err(AppError::Status(StatusCode::BAD_REQUEST));
+        };
+
+        let Some(Ok(segment_id)) = seperated.next().map(str::parse) else {
+            return Err(AppError::Status(StatusCode::BAD_REQUEST));
+        };
+
+        let media_request = match seperated.next().map(str::parse) {
+            Some(Ok(language_index)) => MediaRequest::AudioSegment {
+                index: segment_id,
+                language_index,
+            },
+            Some(Err(_)) => return Err(AppError::Status(StatusCode::BAD_REQUEST)),
+            None => MediaRequest::VideoSegment { index: segment_id },
+        };
+
+        (session_id, media_request)
     } else {
-        MediaRequest::PlayList
+        return Err(AppError::Status(StatusCode::BAD_REQUEST));
     };
 
     let Some(session) = sessions.get(&session_id).await else {
@@ -63,7 +80,7 @@ async fn content_playlist(
 
     tokio::select! {
         resp = session.stream(media_request) => Ok(resp),
-        _  = shutdown.cancelled() => Err(AppError::Status(StatusCode::REQUEST_TIMEOUT))
+        _  = shutdown.cancelled() => Err(AppError::Status(StatusCode::REQUEST_TIMEOUT)),
     }
 }
 

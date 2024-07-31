@@ -1,7 +1,10 @@
 use std::{
+    borrow::Cow,
+    fmt::Write,
     fs,
     path::{Path, PathBuf},
     sync::RwLock,
+    time::Duration,
 };
 
 use tokio::{process::Command, sync::Mutex};
@@ -15,8 +18,8 @@ use anyhow::Context;
 use axum::{http::StatusCode, response::IntoResponse};
 use tracing::{trace, warn};
 
-const SEGMENT_DURATION: f64 = 10.0; // In seconds
-const MAX_CACHED_SEGMENTS: usize = 32;
+const SEGMENT_DURATION: Duration = Duration::from_secs(10);
+const MAX_CACHED_SEGMENTS: usize = 64;
 const PRECOMPUTE_SEGMENTS: usize = 8;
 
 const FFMPEG_LOG_LEVEL: &str = if cfg!(debug_assertions) {
@@ -26,8 +29,10 @@ const FFMPEG_LOG_LEVEL: &str = if cfg!(debug_assertions) {
 };
 
 pub enum MediaRequest {
-    PlayList,
-    Segment(usize),
+    MasterPlaylist,
+    TrackPlaylist { index: usize },
+    VideoSegment { index: usize },
+    AudioSegment { index: usize, language_index: usize },
 }
 
 pub struct TranscodedStream {
@@ -55,25 +60,53 @@ impl TranscodedStream {
 
     pub async fn respond(&self, request: MediaRequest) -> AppResult<impl IntoResponse> {
         match request {
-            MediaRequest::PlayList => {
+            MediaRequest::MasterPlaylist => Ok(self
+                .media_cache
+                .playlist
+                .read()
+                .expect("This should never happen")
+                .master_playlist
+                .clone()
+                .into_response()),
+            MediaRequest::TrackPlaylist { index } => {
                 let playlist = self
                     .media_cache
                     .playlist
                     .read()
-                    .expect("This should never happen");
-                Ok(playlist.file_repr.clone().into_response())
+                    .expect("This should never happen")
+                    .get_playlist_for_track(index);
+                Ok(playlist.into_response())
             }
-            MediaRequest::Segment(index) => {
-                let segment = self.media_cache.request_segment(index).await;
+            MediaRequest::VideoSegment { index } => Ok(self
+                .respond_to_mediarequest(index, None)
+                .await
+                .into_response()),
+            MediaRequest::AudioSegment {
+                index,
+                language_index,
+            } => Ok(self
+                .respond_to_mediarequest(index, Some(language_index))
+                .await
+                .into_response()),
+        }
+    }
 
-                match segment {
-                    Some(segment) => Ok(segment.into_response()),
-                    None => {
-                        let source = self.media_source.lock().await;
-                        warn!("Failed to generate segment {index} for {source:?}");
-                        Err(AppError::Status(StatusCode::NOT_FOUND))
-                    }
-                }
+    async fn respond_to_mediarequest(
+        &self,
+        index: usize,
+        language_index: Option<usize>,
+    ) -> AppResult<Vec<u8>> {
+        let segment = self
+            .media_cache
+            .request_segment(index, language_index)
+            .await;
+
+        match segment {
+            Some(segment) => Ok(segment),
+            None => {
+                let source = self.media_source.lock().await;
+                warn!("Failed to generate segment {index} for {source:?}");
+                Err(AppError::Status(StatusCode::NOT_FOUND))
             }
         }
     }
@@ -93,9 +126,26 @@ impl TranscodedStream {
     }
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum SegmentType {
+    Video,
+    Audio { language_index: usize },
+}
+
+impl SegmentType {
+    fn ffmpeg_mapping(&self) -> Cow<'_, str> {
+        match self {
+            SegmentType::Video => Cow::Borrowed("0:v:0"),
+            SegmentType::Audio { language_index } => Cow::Owned(format!("0:{language_index}")),
+        }
+    }
+}
+
+#[derive(Clone)]
 struct MediaSegment {
     pub data: Vec<u8>,
     index: usize,
+    typ: SegmentType,
 }
 
 struct MediaCache {
@@ -105,6 +155,38 @@ struct MediaCache {
     playlist: RwLock<Playlist>,
     temp_directory: PathBuf,
     duration: Mutex<f64>,
+}
+
+impl MediaCache {
+    async fn find_cached_segment(&self, index: usize, typ: SegmentType) -> Option<MediaSegment> {
+        self.cache
+            .read()
+            .expect("This should never happen")
+            .iter()
+            .find(|segment| segment.index == index && segment.typ == typ)
+            .cloned()
+    }
+
+    async fn extend_cache(&self, segments: Vec<MediaSegment>) {
+        let mut cache = self.cache.write().expect("This should never happen");
+
+        let not_cached = segments
+            .into_iter()
+            .filter(|segment| {
+                let already_cached = cache
+                    .iter()
+                    .any(|cached| cached.index == segment.index && cached.typ == segment.typ);
+                !already_cached
+            })
+            .collect::<Vec<_>>();
+        cache.extend(not_cached);
+
+        let overflow_items = cache
+            .len()
+            .checked_sub(MAX_CACHED_SEGMENTS)
+            .unwrap_or_default();
+        cache.drain(0..overflow_items);
+    }
 }
 
 impl MediaCache {
@@ -149,55 +231,48 @@ impl MediaCache {
     }
 
     /// Returns None if the segment is out of bounds or an error occured
-    async fn request_segment(&self, index: usize) -> Option<Vec<u8>> {
-        let segment = self
-            .cache
-            .read()
-            .expect("This should never happen")
-            .iter()
-            .find(|segment| segment.index == index)
-            .map(|segment| segment.data.clone());
+    async fn request_segment(
+        &self,
+        index: usize,
+        language_index: Option<usize>,
+    ) -> Option<Vec<u8>> {
+        let segment_type = if let Some(language_index) = language_index {
+            SegmentType::Audio { language_index }
+        } else {
+            SegmentType::Video
+        };
+
+        let segment = self.find_cached_segment(index, segment_type).await;
 
         if let Some(segment) = segment {
-            return Some(segment);
+            return Some(segment.data);
         }
         // Check for out of bounds index
-        if (index as f64 * SEGMENT_DURATION) >= *self.duration.lock().await {
+        if (index as f64 * SEGMENT_DURATION.as_secs_f64()) >= *self.duration.lock().await {
             return None;
         }
 
-        let Some(segments) = self.generate_segments_after(index).await.log_err() else {
+        let Some(segments) = self
+            .generate_segments_after(index, segment_type)
+            .await
+            .log_err()
+        else {
             let source = self.media_source.lock().await;
             warn!("Failed to generate segments after index {index} for {source:?}");
             return None;
         };
+        self.extend_cache(segments).await;
 
-        let mut cache = self.cache.write().expect("This should never happen");
-
-        // Caching logic
-        {
-            let not_cached = segments
-                .into_iter()
-                .filter(|segment| {
-                    let already_cached = cache.iter().any(|cached| cached.index == segment.index);
-                    !already_cached
-                })
-                .collect::<Vec<_>>();
-            cache.extend(not_cached);
-
-            let overflow_items = cache
-                .len()
-                .checked_sub(MAX_CACHED_SEGMENTS)
-                .unwrap_or_default();
-            cache.drain(0..overflow_items);
-        }
-
-        let segment = cache.iter().find(|segment| segment.index == index).unwrap();
+        let segment = self.find_cached_segment(index, segment_type).await.unwrap();
         Some(segment.data.clone())
     }
 
     /// Expects a valid index
-    async fn generate_segments_after(&self, index: usize) -> AppResult<Vec<MediaSegment>> {
+    async fn generate_segments_after(
+        &self,
+        index: usize,
+        segment_type: SegmentType,
+    ) -> AppResult<Vec<MediaSegment>> {
         // Generate one extra segment before and after to not have trouble with any artifacting
         let mut segments = Vec::new();
 
@@ -226,7 +301,7 @@ impl MediaCache {
                 "-i",
                 self.media_source.lock().await.to_str().unwrap(),
                 "-map",
-                "0",
+                &segment_type.ffmpeg_mapping(),
                 "-c",
                 "copy",
                 "-f",
@@ -238,7 +313,7 @@ impl MediaCache {
                 "-segment_start_number",
                 &segmentation.start_index.to_string(),
                 "-segment_time_delta",
-                "0.25",
+                "0.5",
                 "-hls_flags",
                 "independent_segments",
                 "-segment_format",
@@ -264,7 +339,19 @@ impl MediaCache {
 
             tracing::trace!("Generated segment {index}");
 
-            segments.push(MediaSegment { data, index });
+            tracing::trace!(
+                "{}",
+                match segment_type {
+                    SegmentType::Video => "Video".to_string(),
+                    SegmentType::Audio { language_index } => format!("Audio {language_index}"),
+                }
+            );
+
+            segments.push(MediaSegment {
+                data,
+                index,
+                typ: segment_type,
+            });
         }
 
         for file in fs::read_dir(&self.temp_directory)
@@ -301,12 +388,15 @@ struct Segmentation {
 }
 
 struct Playlist {
-    pub file_repr: String,
+    master_playlist: String,
+    general_playlist: String,
     segments: Vec<Segment>,
 }
 
 impl Playlist {
     async fn generate(session_id: u32, temp_dir: &Path, media_source: &Path) -> AppResult<Self> {
+        let input = ffmpeg::format::input(&media_source)?;
+
         trace!("Generating playlist");
         let task = Command::new("ffmpeg")
             .current_dir(temp_dir)
@@ -325,13 +415,11 @@ impl Playlist {
                 "-hls_playlist_type",
                 "vod",
                 "-segment_time",
-                &format!("{}", SEGMENT_DURATION as u64),
+                &format!("{}", SEGMENT_DURATION.as_secs_f64()),
                 "-segment_time_delta",
-                "0.25",
+                "0.5",
                 "-hls_flags",
                 "independent_segments",
-                "-hls_segment_type",
-                "mpegts",
                 "-segment_list",
                 "playlist.m3u8",
                 "-segment_list_type",
@@ -387,10 +475,89 @@ impl Playlist {
             })
             .collect::<Vec<_>>();
 
+        let audio_streams = input
+            .streams()
+            .map(|stream| {
+                let context = ffmpeg::codec::context::Context::from_parameters(stream.parameters());
+                (stream, context)
+            })
+            .filter_map(|(stream, codec)| {
+                let Ok(codec) = codec else {
+                    return None;
+                };
+
+                let medium = codec.medium();
+                let decoder = codec.decoder().audio();
+
+                if medium == ffmpeg::media::Type::Audio && decoder.is_ok() {
+                    let decoder = decoder.unwrap();
+                    Some((stream, decoder))
+                } else {
+                    None
+                }
+            })
+            .map(|(stream, audio)| {
+                let index = stream.index();
+                let language = stream.metadata().get("language").unwrap_or("").to_string();
+                let channel_layout = audio.channel_layout();
+                (index, language, channel_layout)
+            });
+
+        let video_stream = input
+            .streams()
+            .best(ffmpeg::media::Type::Video)
+            .with_context(|| format!("Failed to find video stream for {media_source:?}"))?;
+
+        let codec = ffmpeg::codec::context::Context::from_parameters(video_stream.parameters())?;
+        let decoder = codec.decoder().video();
+        let Ok(decoder) = decoder else {
+            bail!("Failed to find video decoder");
+        };
+
+        let width = decoder.width();
+        let height = decoder.height();
+
+        let mut master_playlist = String::from("#EXTM3U\n");
+
+        let mut first = true;
+        for (index, language, channel_layout) in audio_streams {
+            master_playlist.push_str(&format!(
+                "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio_group\",NAME=\"{language} Channels:{channel_layout}\",DEFAULT={default},LANGUAGE=\"{language}\",URI=\"{session_id}.{index}.m3u8\"\n",
+                default = if first {
+                    first = false;
+                    "YES"
+                } else {
+                    "NO"
+                },
+                channel_layout = channel_layout.channels()
+            ));
+        }
+        master_playlist.push_str(&format!("#EXT-X-STREAM-INF:BANDWIDTH=1000000,RESOLUTION={width}x{height},AUDIO=\"audio_group\",CODECS=\"avc1.42e00a,mp4a.40.2\"\n"));
+        master_playlist.push_str(&format!("{session_id}.0.m3u8\n"));
+
         Ok(Self {
-            file_repr,
+            master_playlist,
+            general_playlist: file_repr,
             segments,
         })
+    }
+
+    fn get_playlist_for_track(&self, index: usize) -> impl IntoResponse {
+        if index == 0 {
+            return self.general_playlist.clone();
+        }
+
+        self.general_playlist
+            .lines()
+            .fold(String::new(), |mut s, line| {
+                if line.ends_with(".ts") {
+                    let without_ts = line.trim_end_matches(".ts");
+                    writeln!(&mut s, "{without_ts}.{index}.ts").unwrap();
+                } else {
+                    writeln!(&mut s, "{line}").unwrap();
+                };
+                s
+            })
     }
 
     /// Return None if the index is out of bounds
