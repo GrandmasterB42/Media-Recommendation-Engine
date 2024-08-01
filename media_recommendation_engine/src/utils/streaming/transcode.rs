@@ -459,45 +459,42 @@ impl Playlist {
         writeln!(fake_playlist, "#EXT-X-VERSION:3").unwrap();
         writeln!(fake_playlist, "#EXT-X-MEDIA-SEQUENCE:0").unwrap();
         writeln!(fake_playlist, "#EXT-X-ALLOW-CACHE:YES").unwrap();
-        writeln!(
-            fake_playlist,
-            "#EXT-X-TARGETDURATION:{}",
-            SEGMENT_DURATION.as_secs_f64()
-        )
-        .unwrap();
+        writeln!(fake_playlist, "#EXT-X-TARGETDURATION:HERE",).unwrap();
 
         let mut last_split_time = 0.0;
+        let mut max_duration: f64 = 0.0;
         let mut index = 0;
         let mut lines = file.lines().filter(|line| line.contains('K')).peekable();
         while let Some(line) = lines.next() {
             let segment_timestamp = line.split(',').nth(0).unwrap().parse().unwrap();
 
-            let segment_duration = SEGMENT_DURATION.as_secs_f64();
-            let elapsed_time = segment_timestamp - last_split_time;
+            let target_duration = SEGMENT_DURATION.as_secs_f64();
+            let duration = segment_timestamp - last_split_time;
             let tolerance = 2.0;
-            if !(lines.peek().is_none()
-                || elapsed_time > (segment_duration + tolerance)
-                || elapsed_time > (segment_duration - tolerance))
-            {
+            if !(lines.peek().is_none() || duration > (target_duration - tolerance)) {
                 continue;
             }
 
-            writeln!(
-                fake_playlist,
-                "#EXTINF:{:.8}",
-                segment_timestamp - last_split_time
-            )
-            .unwrap();
+            writeln!(fake_playlist, "#EXTINF:{duration:.8}",).unwrap();
             writeln!(fake_playlist, "{session_id}.{index}.ts").unwrap();
 
             segments.push(Segment {
                 start_time: last_split_time,
-                duration: segment_timestamp - last_split_time,
+                duration,
             });
+
+            max_duration = max_duration.max(duration);
 
             last_split_time = segment_timestamp;
             index += 1;
         }
+
+        let replace_index = fake_playlist.find("HERE").unwrap();
+        fake_playlist.replace_range(
+            replace_index..replace_index + 4,
+            &format!("{max_duration:.8}"),
+        );
+
         writeln!(fake_playlist, "#EXT-X-ENDLIST").unwrap();
 
         // Master Playlist
