@@ -11,7 +11,7 @@ use tokio::{process::Command, sync::Mutex};
 
 use crate::{
     state::{AppError, AppResult},
-    utils::{bail, pseudo_random, relative, HandleErr, ParseBetween},
+    utils::{bail, pseudo_random, relative, HandleErr},
 };
 
 use anyhow::Context;
@@ -19,9 +19,9 @@ use axum::{http::StatusCode, response::IntoResponse};
 use tracing::{trace, warn};
 
 const SEGMENT_DURATION: Duration = Duration::from_secs(10);
-const MAX_CACHED_SEGMENTS: usize = 64;
+const MAX_CACHED_SEGMENTS: usize = 32;
 // One segment at a time tends to cause more artifacting and similar
-const PRECOMPUTE_SEGMENTS: usize = if cfg!(debug_assertions) { 1 } else { 8 };
+const PRECOMPUTE_SEGMENTS: usize = if cfg!(debug_assertions) { 1 } else { 4 };
 
 const FFMPEG_LOG_LEVEL: &str = if cfg!(debug_assertions) {
     "warning"
@@ -410,88 +410,98 @@ struct Playlist {
 
 impl Playlist {
     async fn generate(session_id: u32, temp_dir: &Path, media_source: &Path) -> AppResult<Self> {
-        let input = ffmpeg::format::input(&media_source)?;
-
-        trace!("Generating playlist");
-        let task = Command::new("ffmpeg")
+        // Fake Playlist
+        trace!("Generating playlist for {media_source:?}");
+        let probe_task = Command::new("ffprobe")
             .current_dir(temp_dir)
             .args([
                 "-loglevel",
                 FFMPEG_LOG_LEVEL,
-                "-copyts",
+                "-select_streams",
+                "v",
+                "-show_entries",
+                "packet=pts_time,flags", //stream_index
+                "-of",
+                "csv=print_section=0",
+                "-o",
+                &format!("probe.csv"),
                 "-i",
                 media_source.to_str().unwrap(),
-                "-map",
-                "0:a",
-                "-map",
-                "0:v",
-                "-c",
-                "copy",
-                "-f",
-                "segment",
-                "-hls_playlist_type",
-                "vod",
-                "-segment_time",
-                &format!("{}", SEGMENT_DURATION.as_secs_f64()),
-                "-segment_time_delta",
-                "0.5",
-                "-hls_flags",
-                "independent_segments",
-                "-segment_list",
-                "playlist.m3u8",
-                "-segment_list_type",
-                "m3u8",
-                "-y",
-                &format!("{session_id}.%d.ts"),
             ])
             .spawn()
-            .with_context(|| "Failed to spawn ffmpeg")?
+            .with_context(|| "Failed to spawn ffprobe")?
             .wait()
             .await
-            .with_context(|| "Failed to wait for ffmpeg")?;
+            .with_context(|| "Failed to wait for ffprobe")?;
 
-        if !task.success() {
-            bail!("Failed to transcode segments");
+        if !probe_task.success() {
+            bail!("Failed to probe media");
         }
 
-        let file_repr = fs::read_to_string(temp_dir.join("playlist.m3u8")).with_context(|| {
+        let path = temp_dir.join("probe.csv");
+        let file = fs::read_to_string(&path).with_context(|| {
             format!(
-                "failed to read playlist from temp directory for {}",
+                "failed to read probe file from temp directory for {}",
+                session_id
+            )
+        })?;
+        fs::remove_file(&path).with_context(|| {
+            format!(
+                "failed to remove probe file from temp directory for {}",
                 session_id
             )
         })?;
 
-        // Remove all the files to not cause giant storage issues
-        for file in
-            fs::read_dir(temp_dir).with_context(|| "Failed to read temp directory for deletion")?
-        {
-            let file = file.with_context(|| "Failed to read temp directory entry")?;
-            fs::remove_file(file.path())
-                .with_context(|| format!("Failed to remove temp directory entry {file:?}"))?;
+        let mut fake_playlist = String::new();
+        let mut segments = Vec::new();
+
+        writeln!(fake_playlist, "#EXTM3U").unwrap();
+        writeln!(fake_playlist, "#EXT-X-VERSION:3").unwrap();
+        writeln!(fake_playlist, "#EXT-X-MEDIA-SEQUENCE:0").unwrap();
+        writeln!(fake_playlist, "#EXT-X-ALLOW-CACHE:YES").unwrap();
+        writeln!(
+            fake_playlist,
+            "#EXT-X-TARGETDURATION:{}",
+            SEGMENT_DURATION.as_secs_f64()
+        )
+        .unwrap();
+
+        let mut last_split_time = 0.0;
+        let mut index = 0;
+        let mut lines = file.lines().filter(|line| line.contains('K')).peekable();
+        while let Some(line) = lines.next() {
+            let segment_timestamp = line.split(',').nth(0).unwrap().parse().unwrap();
+
+            let segment_duration = SEGMENT_DURATION.as_secs_f64();
+            let elapsed_time = segment_timestamp - last_split_time;
+            let tolerance = 2.0;
+            if !(lines.peek().is_none()
+                || elapsed_time > (segment_duration + tolerance)
+                || elapsed_time > (segment_duration - tolerance))
+            {
+                continue;
+            }
+
+            writeln!(
+                fake_playlist,
+                "#EXTINF:{:.8}",
+                segment_timestamp - last_split_time
+            )
+            .unwrap();
+            writeln!(fake_playlist, "{session_id}.{index}.ts").unwrap();
+
+            segments.push(Segment {
+                start_time: last_split_time,
+                duration: segment_timestamp - last_split_time,
+            });
+
+            last_split_time = segment_timestamp;
+            index += 1;
         }
+        writeln!(fake_playlist, "#EXT-X-ENDLIST").unwrap();
 
-        let segments = file_repr
-            .lines()
-            .filter(|line| line.starts_with("#EXTINF:"))
-            .scan(0.0f64, |elapsed_time, line| {
-                let time = line.parse_between(':', ',');
-
-                let Ok(duration) = time else {
-                    warn!("A playlist file format seems to be invalid");
-                    return None;
-                };
-
-                let segment = Segment {
-                    start_time: *elapsed_time,
-                    duration,
-                };
-
-                *elapsed_time += duration;
-
-                Some(segment)
-            })
-            .collect::<Vec<_>>();
-
+        // Master Playlist
+        let input = ffmpeg::format::input(&media_source)?;
         let audio_streams = input
             .streams()
             .map(|stream| {
@@ -554,7 +564,7 @@ impl Playlist {
 
         Ok(Self {
             master_playlist,
-            general_playlist: file_repr,
+            general_playlist: fake_playlist,
             segments,
         })
     }
