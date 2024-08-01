@@ -20,7 +20,8 @@ use tracing::{trace, warn};
 
 const SEGMENT_DURATION: Duration = Duration::from_secs(10);
 const MAX_CACHED_SEGMENTS: usize = 64;
-const PRECOMPUTE_SEGMENTS: usize = 8;
+// One segment at a time tends to cause more artifacting and similar
+const PRECOMPUTE_SEGMENTS: usize = if cfg!(debug_assertions) { 1 } else { 8 };
 
 const FFMPEG_LOG_LEVEL: &str = if cfg!(debug_assertions) {
     "warning"
@@ -137,6 +138,13 @@ impl SegmentType {
         match self {
             SegmentType::Video => Cow::Borrowed("0:v:0"),
             SegmentType::Audio { language_index } => Cow::Owned(format!("0:{language_index}")),
+        }
+    }
+
+    fn file_path(&self, index: usize) -> String {
+        match self {
+            SegmentType::Video => format!("{index}.ts"),
+            SegmentType::Audio { language_index } => format!("{index}.{language_index}.ts"),
         }
     }
 }
@@ -288,39 +296,50 @@ impl MediaCache {
         // TODO: use the ffmpeg-next bindings instead of this
         // once that is done, the tokio process feature can be removed
         // Some arguments might not be necessary, more testing is needed
+
+        let mut args = vec![
+            "-loglevel".to_string(),
+            FFMPEG_LOG_LEVEL.to_string(),
+            "-ss".to_string(),
+            segmentation.start_time.to_string(),
+            "-t".to_string(),
+            segmentation.duration.to_string(),
+            "-copyts".to_string(),
+            "-i".to_string(),
+            self.media_source.lock().await.to_str().unwrap().to_string(),
+            "-map".to_string(),
+            segment_type.ffmpeg_mapping().to_string(),
+            "-c".to_string(),
+            "copy".to_string(),
+            "-f".to_string(),
+            "segment".to_string(),
+            "-segment_times".to_string(),
+            segmentation.segment_times,
+            "-force_key_frames".to_string(),
+            segmentation.keyframe_times,
+            "-segment_start_number".to_string(),
+            segmentation.start_index.to_string(),
+            "-segment_time_delta".to_string(),
+            "0.5".to_string(),
+            "-hls_flags".to_string(),
+            "independent_segments".to_string(),
+            "-segment_format".to_string(),
+            "mpegts".to_string(),
+        ];
+
+        if let SegmentType::Audio { language_index } = segment_type {
+            // This mapping the video into the audio stream is a workaround for audio gaps
+            args.insert(11, "-map".to_string());
+            args.insert(12, "0:v".to_string());
+            args.push(format!("%d.{language_index}.ts"));
+        } else {
+            args.push("%d.ts".to_string());
+        }
+        args.push("-y".to_string());
+
         let transcode_status = Command::new("ffmpeg")
             .current_dir(&self.temp_directory)
-            .args([
-                "-loglevel",
-                FFMPEG_LOG_LEVEL,
-                "-ss",
-                &segmentation.start_time.to_string(),
-                "-t",
-                &segmentation.duration.to_string(),
-                "-copyts",
-                "-i",
-                self.media_source.lock().await.to_str().unwrap(),
-                "-map",
-                &segment_type.ffmpeg_mapping(),
-                "-c",
-                "copy",
-                "-f",
-                "segment",
-                "-segment_times",
-                &segmentation.segment_times,
-                "-force_key_frames",
-                &segmentation.keyframe_times,
-                "-segment_start_number",
-                &segmentation.start_index.to_string(),
-                "-segment_time_delta",
-                "0.5",
-                "-hls_flags",
-                "independent_segments",
-                "-segment_format",
-                "mpegts",
-                "%d.ts",
-                "-y",
-            ])
+            .args(args)
             .spawn()
             .with_context(|| "Failed to spawn ffmpeg")?
             .wait()
@@ -332,10 +351,14 @@ impl MediaCache {
         }
 
         for index in index..(index + PRECOMPUTE_SEGMENTS) {
-            let segment_path = self.temp_directory.join(format!("{index}.ts"));
+            let segment_path = self.temp_directory.join(segment_type.file_path(index));
             let Ok(data) = fs::read(&segment_path) else {
                 break;
             };
+
+            fs::remove_file(&segment_path).with_context(|| {
+                format!("Failed to remove transcoding artifact: {segment_path:?}")
+            })?;
 
             tracing::trace!("Generated segment {index}");
 
@@ -352,14 +375,6 @@ impl MediaCache {
                 index,
                 typ: segment_type,
             });
-        }
-
-        for file in fs::read_dir(&self.temp_directory)
-            .with_context(|| "Failed to read temp directory for deletion")?
-        {
-            let file = file.with_context(|| "Failed to read temp directory entry")?;
-            fs::remove_file(file.path())
-                .with_context(|| format!("Failed to remove temp directory entry {file:?}"))?;
         }
 
         Ok(segments)
