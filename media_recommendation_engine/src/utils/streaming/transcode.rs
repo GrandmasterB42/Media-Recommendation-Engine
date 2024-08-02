@@ -254,19 +254,19 @@ impl MediaCache {
     /// Expects a valid index
     async fn generate_segments_after(
         &self,
-        index: usize,
+        requested_index: usize,
         stream_index: usize,
     ) -> AppResult<Vec<MediaSegment>> {
         // Generate one extra segment before and after to not have trouble with any artifacting
         let mut segments = Vec::new();
 
-        trace!("Processing Request for segment {index}");
+        trace!("Processing Request for segment {requested_index}");
 
         let segmentation = self
             .playlist
             .read()
             .await
-            .range_for_segment(index, stream_index)
+            .range_for_segment(requested_index, stream_index)
             .expect("Only none with invalid index");
 
         // TODO: use the ffmpeg-next bindings instead of this
@@ -307,27 +307,9 @@ impl MediaCache {
             "-segment_format".to_string(),
             "mpegts".to_string(),
         ];
-        let medium = {
-            let path = self.media_source.lock().expect("This should never happen");
-            let inp = ffmpeg::format::input(&*path)?;
-            let stream = inp.stream(stream_index).with_context(|| {
-                format!("Got request with index that is out of range: {stream_index}")
-            })?;
-            let codec = ffmpeg::codec::context::Context::from_parameters(stream.parameters())?;
-            codec.decoder().medium()
-        };
 
-        let (path_template, file_path) = match medium {
-            ffmpeg::media::Type::Video => (
-                format!("%d.{stream_index}.ts"),
-                format!("{index}.{stream_index}.ts"),
-            ),
-            ffmpeg::media::Type::Audio => (
-                format!("%d.{stream_index}.ts"),
-                format!("{index}.{stream_index}.ts"),
-            ),
-            _ => bail!("Requested unsupported stream type"),
-        };
+        let path_template = format!("%d.{stream_index}.ts");
+        let file_path = |segment_index: usize| format!("{segment_index}.{stream_index}.ts");
 
         args.push(path_template);
         args.push("-y".to_string());
@@ -345,8 +327,8 @@ impl MediaCache {
             bail!("Failed to transcode segments");
         }
 
-        for index in index..(index + PRECOMPUTE_SEGMENTS) {
-            let segment_path = self.temp_directory.join(&file_path);
+        for index in requested_index..(requested_index + PRECOMPUTE_SEGMENTS) {
+            let segment_path = self.temp_directory.join(file_path(index));
             let Ok(data) = fs::read(&segment_path) else {
                 break;
             };
