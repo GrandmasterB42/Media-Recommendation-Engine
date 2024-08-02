@@ -16,13 +16,14 @@ use crate::{
     database::{Connection, Database, QueryRowGetConnExt, QueryRowGetStmtExt, QueryRowIntoStmtExt},
     indexing::{
         classify::{classify, Classification},
-        file_handling::{scan_dir, AsDBString, HashFile, PathExt},
+        file_handling::{scan_dir, HashFile, PathExt},
     },
     state::{AppResult, IndexingTrigger, Shutdown},
     utils::{HandleErr, ServerSettings},
 };
 
 pub use db::{CollectionType, ContentType, TableId};
+pub use file_handling::AsDBString;
 
 pub async fn periodic_indexing(
     db: Database,

@@ -157,8 +157,8 @@ fn classify_audio(path: &Path, db: &Connection) -> AppResult<Classification> {
 }
 
 fn classify_video(path: &Path, db: &Connection) -> AppResult<Classification> {
-    let title = path.file_stem().unwrap_or_default().as_db_string();
-    let (title, info) = strip_info(&title);
+    let original_title = path.file_stem().unwrap_or_default().as_db_string();
+    let (title, info) = strip_info(&original_title);
     let (title, _year) = strip_year(title);
 
     let mut c_part = 0;
@@ -190,8 +190,15 @@ fn classify_video(path: &Path, db: &Connection) -> AppResult<Classification> {
             *season = c_season;
         }
     }
+
+    let title = if let ClassificationCategory::Movie = category {
+        strip_info(&original_title).0.to_string()
+    } else {
+        title.to_string()
+    };
+
     Ok(Classification {
-        title: title.to_owned(),
+        title,
         part: c_part,
         category,
         collectionhint: hint,
