@@ -23,6 +23,13 @@ CREATE TABLE content (
     part INTEGER NOT NULL
 );
 
+CREATE TABLE content_playlist (
+    content_id INTEGER REFERENCES content (id),
+    stream_index INTEGER NOT NULL,
+    playlist BLOB NOT NULL,
+    UNIQUE (content_id) ON CONFLICT IGNORE
+);
+
 ------------
 
 -- # Content type data

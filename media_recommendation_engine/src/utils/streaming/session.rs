@@ -152,7 +152,7 @@ impl StreamingSessions {
             }
         };
 
-        let session = Session::new(db, shutdown, content_id, random).await?;
+        let session = Session::new(db, shutdown, content_id, random)?;
         self.insert(random, session).await;
 
         Ok(random)
@@ -171,7 +171,7 @@ pub struct Session {
 }
 
 impl Session {
-    pub async fn new(
+    pub fn new(
         db: &Database,
         shutdown: Shutdown,
         content_id: u64,
@@ -204,7 +204,7 @@ impl Session {
 
         let session = Self {
             video_id: Mutex::new(content_id),
-            stream: TranscodedStream::new(file_path, session_id).await?,
+            stream: TranscodedStream::new(file_path, session_id)?,
             receivers: Mutex::new(Vec::new()),
             channel,
             state: Mutex::new(SessionState::Playing),
@@ -225,7 +225,7 @@ impl Session {
         )?;
         let file_path = Path::new(&file_path);
 
-        if self.stream.current_path().await == file_path {
+        if self.stream.current_path() == file_path {
             return Ok(());
         }
 
@@ -242,8 +242,9 @@ impl Session {
         Ok(())
     }
 
-    pub async fn stream(&self, request: MediaRequest) -> impl IntoResponse {
-        self.stream.respond(request).await
+    pub async fn stream(&self, request: MediaRequest) -> AppResult<impl IntoResponse> {
+        let conn = self.db.get()?;
+        self.stream.respond(conn, request).await
     }
 
     pub async fn add_receiver(&self, user: &User, id: UserSessionID) {

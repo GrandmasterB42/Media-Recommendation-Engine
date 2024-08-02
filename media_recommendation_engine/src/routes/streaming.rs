@@ -22,13 +22,13 @@ use crate::{
 
 pub fn streaming() -> Router<AppState> {
     Router::new()
-        .route("/content/:id", get(content_playlist))
+        .route("/content/:id", get(content))
         .route("/:id", get(new_session))
         .route("/session/:id", get(session))
         .route("/session/ws/:id", get(ws_session))
 }
 
-async fn content_playlist(
+async fn content(
     Path(content_token): Path<String>,
     State(sessions): State<StreamingSessions>,
     State(shutdown): State<Shutdown>,
@@ -56,18 +56,15 @@ async fn content_playlist(
             return Err(AppError::Status(StatusCode::BAD_REQUEST));
         };
 
-        let Some(Ok(segment_id)) = seperated.next().map(str::parse) else {
+        let Some(Ok(part)) = seperated.next().map(str::parse) else {
             return Err(AppError::Status(StatusCode::BAD_REQUEST));
         };
 
-        let media_request = match seperated.next().map(str::parse) {
-            Some(Ok(language_index)) => MediaRequest::AudioSegment {
-                index: segment_id,
-                language_index,
-            },
-            Some(Err(_)) => return Err(AppError::Status(StatusCode::BAD_REQUEST)),
-            None => MediaRequest::VideoSegment { index: segment_id },
+        let Some(Ok(stream_index)) = seperated.next().map(str::parse) else {
+            return Err(AppError::Status(StatusCode::BAD_REQUEST));
         };
+
+        let media_request = MediaRequest::Media { part, stream_index };
 
         (session_id, media_request)
     } else {
