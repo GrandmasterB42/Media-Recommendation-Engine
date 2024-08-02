@@ -572,18 +572,18 @@ impl Playlist {
                     codec.medium()
                 };
 
+                let this_idx = stream.index();
+
                 match medium {
                     ffmpeg::media::Type::Video | ffmpeg::media::Type::Audio => (),
                     _ => {
-                        trace!("Encountered unsupported stream type while generatin playlist");
+                        trace!("Encountered unsupported stream type while generating playlist for stream {this_idx}");
                         continue;
                     }
                 }
 
                 let mut fake_playlist = String::new();
                 let mut segments = Vec::new();
-
-                let this_idx = stream.index();
 
                 writeln!(fake_playlist, "#EXTM3U").unwrap();
                 writeln!(fake_playlist, "#EXT-X-VERSION:3").unwrap();
