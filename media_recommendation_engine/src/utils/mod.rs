@@ -46,6 +46,13 @@ macro_rules! bail {
 }
 pub(crate) use bail;
 
+macro_rules! status {
+    ($err:expr) => {
+        return Err(crate::state::AppError::Status($err))
+    };
+}
+pub(crate) use status;
+
 pub fn pseudo_random() -> u32 {
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)

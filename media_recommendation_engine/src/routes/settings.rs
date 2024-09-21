@@ -127,7 +127,7 @@ async fn admin_section(
     let admin_settings = if auth.has_perm("owner").await? {
         vec![location_addition(&db)?, user_creation(&db)?]
     } else {
-        return AppResult::Err(AppError::Status(StatusCode::UNAUTHORIZED));
+        status!(StatusCode::UNAUTHORIZED);
     };
 
     Ok(AdminSettings { admin_settings })
@@ -176,7 +176,7 @@ async fn username(
     new_name: Form<ChangeUsername>,
 ) -> AppResult<impl IntoResponse> {
     let Some(user) = auth.user else {
-        return Err(AppError::Status(StatusCode::UNAUTHORIZED));
+        status!(StatusCode::UNAUTHORIZED);
     };
 
     let conn = db.get()?;
@@ -224,7 +224,7 @@ async fn password(
     new_password: Form<ChangePassword>,
 ) -> AppResult<impl IntoResponse> {
     let Some(user) = auth.user else {
-        return Err(AppError::Status(StatusCode::UNAUTHORIZED));
+        status!(StatusCode::UNAUTHORIZED);
     };
 
     let conn = db.get()?;
@@ -259,7 +259,7 @@ async fn add_user(
     Form(new_user): Form<NewUser>,
 ) -> AppResult<impl IntoResponse> {
     if !auth.has_perm("owner").await.unwrap_or_default() {
-        return Err(AppError::Status(StatusCode::UNAUTHORIZED));
+        status!(StatusCode::UNAUTHORIZED);
     }
 
     let conn = db.get()?;
@@ -428,7 +428,7 @@ async fn add_location(
     Form(location): Form<AddLocation>,
 ) -> AppResult<impl IntoResponse> {
     if !auth.has_perm("owner").await.unwrap_or_default() {
-        return Err(AppError::Status(StatusCode::UNAUTHORIZED));
+        status!(StatusCode::UNAUTHORIZED);
     }
 
     let conn = db.get()?;
@@ -490,7 +490,7 @@ async fn remove_location(
     Path(id): Path<u64>,
 ) -> AppResult<impl IntoResponse> {
     if !auth.has_perm("owner").await? {
-        return Err(AppError::Status(StatusCode::UNAUTHORIZED));
+        status!(StatusCode::UNAUTHORIZED);
     }
 
     let deletion_amount = db
@@ -527,7 +527,7 @@ async fn recurse_location(
     Form(recurse): Form<RecurseLocation>,
 ) -> AppResult<impl IntoResponse> {
     if !auth.has_perm("owner").await? {
-        return Err(AppError::Status(StatusCode::UNAUTHORIZED));
+        status!(StatusCode::UNAUTHORIZED);
     }
 
     let conn = db.get()?;
