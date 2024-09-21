@@ -199,6 +199,7 @@ pub struct GridElement {
 #[template(path = "../frontend/content/video.html")]
 pub struct Video {
     pub id: u64,
+    pub stream_identifier: String,
 }
 
 #[derive(Template)]

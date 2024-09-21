@@ -25,7 +25,7 @@ CREATE TABLE content (
 
 CREATE TABLE content_playlist (
     content_id INTEGER REFERENCES content (id),
-    stream_index INTEGER NOT NULL,
+    stream_index TEXT NOT NULL,
     playlist BLOB NOT NULL,
     UNIQUE (content_id, stream_index) ON CONFLICT IGNORE
 );

@@ -32,13 +32,15 @@ use super::{
     transcode::{MediaRequest, TranscodedStream},
 };
 
+pub type SessionId = u32;
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum SessionState {
     Playing,
     Paused,
 }
 
-pub type Sessions = Arc<Mutex<HashMap<u32, Arc<Session>>>>;
+pub type Sessions = Arc<Mutex<HashMap<SessionId, Arc<Session>>>>;
 
 #[derive(Clone)]
 pub struct StreamingSessions {
@@ -80,8 +82,8 @@ impl StreamingSessions {
         iter.into_iter()
     }
 
-    pub async fn get(&self, id: &u32) -> Option<Arc<Session>> {
-        self.sessions.lock().await.get(id).cloned()
+    pub async fn get(&self, id: SessionId) -> Option<Arc<Session>> {
+        self.sessions.lock().await.get(&id).cloned()
     }
 
     pub async fn insert(&mut self, id: u32, session: Session) {
@@ -97,8 +99,8 @@ impl StreamingSessions {
         self.should_rerender.notify_one();
     }
 
-    pub async fn remove(&mut self, id: &u32) {
-        self.sessions.lock().await.remove(id);
+    pub async fn remove(&mut self, id: SessionId) {
+        self.sessions.lock().await.remove(&id);
         self.should_rerender.notify_one();
     }
 
@@ -147,12 +149,12 @@ impl StreamingSessions {
     ) -> AppResult<u32> {
         let random = loop {
             let random = pseudo_random();
-            if self.get(&random).await.is_none() {
+            if self.get(random as SessionId).await.is_none() {
                 break random;
             }
         };
 
-        let session = Session::new(db, shutdown, content_id, random)?;
+        let session = Session::new(db, shutdown, content_id, random).await?;
         self.insert(random, session).await;
 
         Ok(random)
@@ -171,11 +173,11 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn new(
+    pub async fn new(
         db: &Database,
         shutdown: Shutdown,
         content_id: u64,
-        session_id: u32,
+        session_id: SessionId,
     ) -> AppResult<Self> {
         let file_path = db.get()?.query_row_get::<String>(
             "SELECT data_file.path FROM content, data_file
@@ -204,7 +206,7 @@ impl Session {
 
         let session = Self {
             video_id: Mutex::new(content_id),
-            stream: TranscodedStream::new(file_path, session_id)?,
+            stream: TranscodedStream::new(file_path, session_id).await?,
             receivers: Mutex::new(Vec::new()),
             channel,
             state: Mutex::new(SessionState::Playing),

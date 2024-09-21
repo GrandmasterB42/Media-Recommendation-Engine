@@ -14,7 +14,7 @@ use crate::{
     database::Database,
     state::{AppError, AppResult, AppState, Shutdown},
     utils::{
-        streaming::{MediaRequest, Session, StreamingSessions},
+        streaming::{MediaRequest, Session, SessionId, StreamIndicies, StreamingSessions},
         templates::{Notification, Video},
         AuthSession, HandleErr,
     },
@@ -28,6 +28,7 @@ pub fn streaming() -> Router<AppState> {
         .route("/session/ws/:id", get(ws_session))
 }
 
+#[axum::debug_handler(state=AppState)]
 async fn content(
     Path(content_token): Path<String>,
     State(sessions): State<StreamingSessions>,
@@ -37,15 +38,16 @@ async fn content(
         let content_token = content_token.trim_end_matches(".m3u8");
         let mut seperated = content_token.split('.');
 
-        let Some(Ok(session_id)) = seperated.next().map(str::parse) else {
+        let Some(Ok(session_id)) = seperated.next().map(str::parse::<SessionId>) else {
             return Err(AppError::Status(StatusCode::BAD_REQUEST));
         };
 
-        let media_request = if let Some(Ok(track_id)) = seperated.next().map(str::parse) {
-            MediaRequest::TrackPlaylist { index: track_id }
-        } else {
-            MediaRequest::MasterPlaylist
-        };
+        let media_request =
+            if let Some(Ok(streams)) = seperated.next().map(StreamIndicies::try_from) {
+                MediaRequest::Playlist { streams }
+            } else {
+                return Err(AppError::Status(StatusCode::BAD_REQUEST));
+            };
 
         (session_id, media_request)
     } else if content_token.ends_with(".ts") {
@@ -60,18 +62,18 @@ async fn content(
             return Err(AppError::Status(StatusCode::BAD_REQUEST));
         };
 
-        let Some(Ok(stream_index)) = seperated.next().map(str::parse) else {
+        let Some(Ok(streams)) = seperated.next().map(StreamIndicies::try_from) else {
             return Err(AppError::Status(StatusCode::BAD_REQUEST));
         };
 
-        let media_request = MediaRequest::Media { part, stream_index };
+        let media_request = MediaRequest::Media { part, streams };
 
         (session_id, media_request)
     } else {
         return Err(AppError::Status(StatusCode::BAD_REQUEST));
     };
 
-    let Some(session) = sessions.get(&session_id).await else {
+    let Some(session) = sessions.get(session_id).await else {
         return Err(AppError::Status(StatusCode::FORBIDDEN));
     };
 
@@ -95,12 +97,15 @@ async fn new_session(
 }
 
 async fn session(Path(id): Path<u64>) -> impl IntoResponse {
-    Video { id }
+    Video {
+        id,
+        stream_identifier: "v,a".to_string(),
+    }
 }
 
 async fn ws_session(
     ws: WebSocketUpgrade,
-    Path(id): Path<u32>,
+    Path(id): Path<SessionId>,
     State(sessions): State<StreamingSessions>,
     auth: AuthSession,
 ) -> impl IntoResponse {
@@ -109,7 +114,7 @@ async fn ws_session(
 
 async fn ws_session_callback(
     mut socket: WebSocket,
-    id: u32,
+    id: SessionId,
     mut sessions: StreamingSessions,
     auth: AuthSession,
 ) {
@@ -117,7 +122,7 @@ async fn ws_session_callback(
         return;
     };
 
-    let Some(session) = sessions.get(&id).await else {
+    let Some(session) = sessions.get(id).await else {
         socket
             .send(Message::Text(
                 Notification {
@@ -136,6 +141,6 @@ async fn ws_session_callback(
     let is_empty = Session::handle_user(session, user, socket).await;
 
     if is_empty {
-        sessions.remove(&id).await;
+        sessions.remove(id).await;
     }
 }
