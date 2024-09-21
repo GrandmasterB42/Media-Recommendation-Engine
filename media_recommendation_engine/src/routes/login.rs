@@ -1,5 +1,3 @@
-use std::{fmt, str::FromStr};
-
 use askama::Template;
 use askama_axum::IntoResponse;
 use axum::{
@@ -8,11 +6,12 @@ use axum::{
     routing::{get, post},
     Form, Router,
 };
-use serde::{de, Deserialize, Deserializer};
+use serde::Deserialize;
 
 use crate::{
     state::{AppResult, AppState},
     utils::{
+        empty_string_as_none,
         templates::{Index, LoginPage, SwapIn},
         AuthSession, Credentials, HandleErr,
     },
@@ -23,19 +22,6 @@ pub fn login() -> Router<AppState> {
         .route("/login", get(login_page))
         .route("/login/submit", post(login_form))
         .route("/logout", post(logout))
-}
-
-fn empty_string_as_none<'de, D, T>(de: D) -> Result<Option<T>, D::Error>
-where
-    D: Deserializer<'de>,
-    T: FromStr,
-    T::Err: fmt::Display,
-{
-    let opt = Option::<String>::deserialize(de)?;
-    match opt.as_deref() {
-        None | Some("") => Ok(None),
-        Some(s) => FromStr::from_str(s).map_err(de::Error::custom).map(Some),
-    }
 }
 
 #[derive(Deserialize)]

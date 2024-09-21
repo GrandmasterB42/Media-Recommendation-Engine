@@ -1,4 +1,4 @@
-use std::time::SystemTime;
+use std::{fmt, str::FromStr, time::SystemTime};
 
 mod errorext;
 pub use errorext::{ConvertErr, HandleErr, Ignore};
@@ -7,6 +7,7 @@ mod parsing;
 pub use parsing::{ParseBetween, ParseUntil};
 
 mod tracing;
+use serde::{de, Deserialize, Deserializer};
 pub use tracing::{init_tracing, TraceLayerExt};
 
 mod frontend;
@@ -46,6 +47,13 @@ macro_rules! bail {
 }
 pub(crate) use bail;
 
+macro_rules! status {
+    ($status:expr) => {
+        return Err(AppError::Status($status))
+    };
+}
+pub(crate) use status;
+
 pub fn pseudo_random() -> u32 {
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -55,4 +63,17 @@ pub fn pseudo_random() -> u32 {
 
 pub fn pseudo_random_range(min: u32, max: u32) -> u32 {
     min + (pseudo_random() % (max - min))
+}
+
+pub fn empty_string_as_none<'de, D, T>(de: D) -> Result<Option<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: FromStr,
+    T::Err: fmt::Display,
+{
+    let opt = Option::<String>::deserialize(de)?;
+    match opt.as_deref() {
+        None | Some("") => Ok(None),
+        Some(s) => FromStr::from_str(s).map_err(de::Error::custom).map(Some),
+    }
 }

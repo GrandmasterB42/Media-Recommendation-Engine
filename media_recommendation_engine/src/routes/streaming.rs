@@ -1,11 +1,10 @@
 use askama::Template;
 use axum::{
-    body::Body,
     extract::{
         ws::{Message, WebSocket},
         Path, State, WebSocketUpgrade,
     },
-    http::{Request, StatusCode},
+    http::StatusCode,
     response::{IntoResponse, Redirect},
     routing::get,
     Router,
@@ -13,9 +12,9 @@ use axum::{
 
 use crate::{
     database::Database,
-    state::{AppResult, AppState, Shutdown},
+    state::{AppError, AppResult, AppState, Shutdown},
     utils::{
-        streaming::{Session, StreamingSessions},
+        streaming::{MediaRequest, Session, SessionId, StreamIndicies, StreamingSessions},
         templates::{Notification, Video},
         AuthSession, HandleErr,
     },
@@ -29,19 +28,58 @@ pub fn streaming() -> Router<AppState> {
         .route("/session/ws/:id", get(ws_session))
 }
 
+#[axum::debug_handler(state=AppState)]
 async fn content(
-    Path(id): Path<u32>,
+    Path(content_token): Path<String>,
     State(sessions): State<StreamingSessions>,
     State(shutdown): State<Shutdown>,
-    request: Request<Body>,
-) -> Result<impl IntoResponse, impl IntoResponse> {
-    let Some(session) = sessions.get(&id).await else {
-        return Err((StatusCode::FORBIDDEN).into_response());
+) -> AppResult<impl IntoResponse> {
+    let (session_id, media_request) = if content_token.ends_with(".m3u8") {
+        let content_token = content_token.trim_end_matches(".m3u8");
+        let mut seperated = content_token.split('.');
+
+        let Some(Ok(session_id)) = seperated.next().map(str::parse::<SessionId>) else {
+            return Err(AppError::Status(StatusCode::BAD_REQUEST));
+        };
+
+        let media_request =
+            if let Some(Ok(streams)) = seperated.next().map(StreamIndicies::try_from) {
+                MediaRequest::Playlist { streams }
+            } else {
+                return Err(AppError::Status(StatusCode::BAD_REQUEST));
+            };
+
+        (session_id, media_request)
+    } else if content_token.ends_with(".ts") {
+        let content_token = content_token.trim_end_matches(".ts");
+        let mut seperated = content_token.split('.');
+
+        let Some(Ok(session_id)) = seperated.next().map(str::parse) else {
+            return Err(AppError::Status(StatusCode::BAD_REQUEST));
+        };
+
+        let Some(Ok(part)) = seperated.next().map(str::parse) else {
+            return Err(AppError::Status(StatusCode::BAD_REQUEST));
+        };
+
+        let Some(Ok(streams)) = seperated.next().map(StreamIndicies::try_from) else {
+            return Err(AppError::Status(StatusCode::BAD_REQUEST));
+        };
+
+        let media_request = MediaRequest::Media { part, streams };
+
+        (session_id, media_request)
+    } else {
+        return Err(AppError::Status(StatusCode::BAD_REQUEST));
+    };
+
+    let Some(session) = sessions.get(session_id).await else {
+        return Err(AppError::Status(StatusCode::FORBIDDEN));
     };
 
     tokio::select! {
-        resp = session.stream(request) => Ok(resp),
-        _  = shutdown.cancelled() => Err(StatusCode::REQUEST_TIMEOUT.into_response())
+        resp = session.stream(media_request) => Ok(resp),
+        _  = shutdown.cancelled() => Err(AppError::Status(StatusCode::REQUEST_TIMEOUT)),
     }
 }
 
@@ -59,12 +97,15 @@ async fn new_session(
 }
 
 async fn session(Path(id): Path<u64>) -> impl IntoResponse {
-    Video { id }
+    Video {
+        id,
+        stream_identifier: "v,a".to_string(),
+    }
 }
 
 async fn ws_session(
     ws: WebSocketUpgrade,
-    Path(id): Path<u32>,
+    Path(id): Path<SessionId>,
     State(sessions): State<StreamingSessions>,
     auth: AuthSession,
 ) -> impl IntoResponse {
@@ -73,7 +114,7 @@ async fn ws_session(
 
 async fn ws_session_callback(
     mut socket: WebSocket,
-    id: u32,
+    id: SessionId,
     mut sessions: StreamingSessions,
     auth: AuthSession,
 ) {
@@ -81,7 +122,7 @@ async fn ws_session_callback(
         return;
     };
 
-    let Some(session) = sessions.get(&id).await else {
+    let Some(session) = sessions.get(id).await else {
         socket
             .send(Message::Text(
                 Notification {
@@ -100,6 +141,6 @@ async fn ws_session_callback(
     let is_empty = Session::handle_user(session, user, socket).await;
 
     if is_empty {
-        sessions.remove(&id).await;
+        sessions.remove(id).await;
     }
 }

@@ -4,6 +4,8 @@
     });
 </script>
 
+<script src="/scripts/hls.js" controls></script>
+
 <div class="video-container theater paused" hx-ext="ws" ws-connect="/video/session/ws/{{id}}" data-volume-level="high"
     hx-history="false">
     <script src="/scripts/video.js"></script>
@@ -11,7 +13,8 @@
     <link rel="stylesheet" href="/styles/notifications.css" />
     <link rel="stylesheet" href="/styles/popups.css" />
 
-    <video id="currentvideo" src="/video/content/{{id}}?invalidate=0" hx-on:click="togglePlay()">
+    <video id="currentvideo" src="/video/content/{{id}}.{{stream_identifier}}.m3u8?invalidate=0"
+        hx-on:click="togglePlay()">
     </video>
     <div class="video-controls theater">
         <div class="timeline-container" hx-on:mousemove="handleTimelineUpdate(event)"

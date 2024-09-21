@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    path::Path,
     pin::Pin,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -9,16 +10,10 @@ use std::{
 };
 
 use askama::Template;
-use axum::{
-    body::Body,
-    extract::{ws::WebSocket, Request},
-    response::IntoResponse,
-};
+use axum::{extract::ws::WebSocket, response::IntoResponse};
 use futures_util::Future;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{watch, Mutex, Notify};
-use tower::Service;
-use tower_http::services::ServeFile;
 use tracing::error;
 
 use crate::{
@@ -32,7 +27,12 @@ use crate::{
     },
 };
 
-use super::communication::{SessionChannel, UserSessionID, WSSend};
+use super::{
+    communication::{SessionChannel, UserSessionID, WSSend},
+    transcode::{MediaRequest, TranscodedStream},
+};
+
+pub type SessionId = u32;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum SessionState {
@@ -40,7 +40,7 @@ pub enum SessionState {
     Paused,
 }
 
-pub type Sessions = Arc<Mutex<HashMap<u32, Arc<Session>>>>;
+pub type Sessions = Arc<Mutex<HashMap<SessionId, Arc<Session>>>>;
 
 #[derive(Clone)]
 pub struct StreamingSessions {
@@ -82,8 +82,8 @@ impl StreamingSessions {
         iter.into_iter()
     }
 
-    pub async fn get(&self, id: &u32) -> Option<Arc<Session>> {
-        self.sessions.lock().await.get(id).cloned()
+    pub async fn get(&self, id: SessionId) -> Option<Arc<Session>> {
+        self.sessions.lock().await.get(&id).cloned()
     }
 
     pub async fn insert(&mut self, id: u32, session: Session) {
@@ -99,8 +99,8 @@ impl StreamingSessions {
         self.should_rerender.notify_one();
     }
 
-    pub async fn remove(&mut self, id: &u32) {
-        self.sessions.lock().await.remove(id);
+    pub async fn remove(&mut self, id: SessionId) {
+        self.sessions.lock().await.remove(&id);
         self.should_rerender.notify_one();
     }
 
@@ -149,12 +149,12 @@ impl StreamingSessions {
     ) -> AppResult<u32> {
         let random = loop {
             let random = pseudo_random();
-            if self.get(&random).await.is_none() {
+            if self.get(random as SessionId).await.is_none() {
                 break random;
             }
         };
 
-        let session = Session::new(db, shutdown, content_id)?;
+        let session = Session::new(db, shutdown, content_id, random).await?;
         self.insert(random, session).await;
 
         Ok(random)
@@ -163,8 +163,7 @@ impl StreamingSessions {
 
 pub struct Session {
     video_id: Mutex<u64>,
-    file_path: Mutex<String>,
-    stream: Mutex<ServeFile>,
+    stream: TranscodedStream,
     receivers: Mutex<Vec<(User, UserSessionID)>>,
     channel: SessionChannel,
     state: Mutex<SessionState>,
@@ -174,16 +173,20 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn new(db: &Database, shutdown: Shutdown, content_id: u64) -> AppResult<Self> {
-        let file_path: String = db.get()?.query_row_get(
+    pub async fn new(
+        db: &Database,
+        shutdown: Shutdown,
+        content_id: u64,
+        session_id: SessionId,
+    ) -> AppResult<Self> {
+        let file_path = db.get()?.query_row_get::<String>(
             "SELECT data_file.path FROM content, data_file
                 WHERE content.data_id = data_file.id
                 AND content.id = ?1
                 AND part = 0",
             [content_id],
         )?;
-
-        let stream = ServeFile::new(&file_path);
+        let file_path = Path::new(&file_path);
 
         let media_context = ffmpeg::format::input(&file_path)?;
         let total_time = media_context.duration() as f64 / f64::from(ffmpeg::ffi::AV_TIME_BASE);
@@ -203,8 +206,7 @@ impl Session {
 
         let session = Self {
             video_id: Mutex::new(content_id),
-            file_path: Mutex::new(file_path),
-            stream: Mutex::new(stream),
+            stream: TranscodedStream::new(file_path, session_id).await?,
             receivers: Mutex::new(Vec::new()),
             channel,
             state: Mutex::new(SessionState::Playing),
@@ -217,19 +219,19 @@ impl Session {
     }
 
     pub async fn reuse(&self, content_id: u64) -> AppResult<()> {
-        let file_path: String = self.db.get()?.query_row_get(
+        let file_path = self.db.get()?.query_row_get::<String>(
             "SELECT data_file.path FROM data_file, content 
                     WHERE content.id = ?1
                     AND content.data_id = data_file.id",
             [content_id],
         )?;
+        let file_path = Path::new(&file_path);
 
-        if *self.file_path.lock().await == file_path {
+        if self.stream.current_path() == file_path {
             return Ok(());
         }
 
         *self.video_id.lock().await = content_id;
-        self.file_path.lock().await.clone_from(&file_path);
 
         let media_context = ffmpeg::format::input(&file_path)?;
         let total_time = media_context.duration() as f64 / f64::from(ffmpeg::ffi::AV_TIME_BASE);
@@ -237,18 +239,14 @@ impl Session {
         self.time_estimate.reset(total_time).await;
         *self.next_recommended.lock().await = RecommendationPopupState::new(&self.db, content_id);
 
-        let serve_file = ServeFile::new(&file_path);
-        self.replace_stream(serve_file, &file_path).await;
+        self.stream.reuse(file_path).await?;
 
         Ok(())
     }
-    pub async fn stream(&self, req: Request<Body>) -> impl IntoResponse {
-        self.stream.lock().await.call(req).await
-    }
 
-    async fn replace_stream(&self, stream: ServeFile, path: &str) {
-        *self.stream.lock().await = stream;
-        path.clone_into(&mut (self.file_path.lock().await.to_string()));
+    pub async fn stream(&self, request: MediaRequest) -> AppResult<impl IntoResponse> {
+        let conn = self.db.get()?;
+        self.stream.respond(conn, request).await
     }
 
     pub async fn add_receiver(&self, user: &User, id: UserSessionID) {

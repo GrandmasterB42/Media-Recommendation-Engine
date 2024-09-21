@@ -16,13 +16,14 @@ use crate::{
     database::{Connection, Database, QueryRowGetConnExt, QueryRowGetStmtExt, QueryRowIntoStmtExt},
     indexing::{
         classify::{classify, Classification},
-        file_handling::{scan_dir, AsDBString, HashFile, PathExt},
+        file_handling::{scan_dir, HashFile, PathExt},
     },
     state::{AppResult, IndexingTrigger, Shutdown},
     utils::{HandleErr, ServerSettings},
 };
 
 pub use db::{CollectionType, ContentType, TableId};
+pub use file_handling::AsDBString;
 
 pub async fn periodic_indexing(
     db: Database,
@@ -148,6 +149,7 @@ fn indexing(db: &Database) -> AppResult<()> {
     trace!("Started Hashing");
     // TODO: The hashes need to be computed differently (maybe concurrently or in parallel)
     // Try to reassign unassigned content or just create new content entries
+    /*
     hashes.iter_mut().enumerate().for_each(|(i, entry)| {
         trace!("Hashing {:?}", no_content[i].1);
         *entry = no_content[i]
@@ -155,7 +157,7 @@ fn indexing(db: &Database) -> AppResult<()> {
             .hash_file()
             .log_err_with_msg(&format!("failed to hash file: {:?}", no_content[i].1))
             .unwrap_or_default();
-    });
+    });*/
 
     trace!("Started Classifying");
     for (_, path) in &no_content {
